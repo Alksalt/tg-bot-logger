@@ -8,9 +8,6 @@ from tg_time_logger.economy import FunEconomySnapshot, calculate_fun_economy
 from tg_time_logger.time_utils import week_range_for
 
 
-VALID_CATEGORIES = {"work", "study", "learn"}
-
-
 @dataclass(frozen=True)
 class PeriodTotals:
     productive_minutes: int

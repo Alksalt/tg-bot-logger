@@ -16,8 +16,8 @@ from tg_time_logger.db import Database
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 from tg_time_logger.llm_parser import parse_free_form_with_llm
 from tg_time_logger.messages import entry_removed_message, status_message, week_message
-from tg_time_logger.service import VALID_CATEGORIES, compute_status
-from tg_time_logger.time_utils import now_local, week_range_for, week_start_date
+from tg_time_logger.service import compute_status
+from tg_time_logger.time_utils import now_local, week_start_date
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +25,14 @@ logger = logging.getLogger(__name__)
 def build_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton("+15m Work", callback_data="log:work:15"),
-            InlineKeyboardButton("+30m Work", callback_data="log:work:30"),
-            InlineKeyboardButton("+60m Work", callback_data="log:work:60"),
+            InlineKeyboardButton("+15m Productive", callback_data="productive:15"),
+            InlineKeyboardButton("+30m Productive", callback_data="productive:30"),
+            InlineKeyboardButton("+60m Productive", callback_data="productive:60"),
         ],
         [
-            InlineKeyboardButton("+15m Study", callback_data="log:study:15"),
-            InlineKeyboardButton("+30m Study", callback_data="log:study:30"),
-            InlineKeyboardButton("+60m Study", callback_data="log:study:60"),
-        ],
-        [
-            InlineKeyboardButton("+15m Learn", callback_data="log:learn:15"),
-            InlineKeyboardButton("+30m Learn", callback_data="log:learn:30"),
-            InlineKeyboardButton("+60m Learn", callback_data="log:learn:60"),
+            InlineKeyboardButton("-15m Fun", callback_data="spend:15"),
+            InlineKeyboardButton("-30m Fun", callback_data="spend:30"),
+            InlineKeyboardButton("-60m Fun", callback_data="spend:60"),
         ],
         [
             InlineKeyboardButton("Status", callback_data="status"),
@@ -73,26 +68,20 @@ def _touch_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int
 async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = _touch_user(update, context)
 
-    if len(context.args) < 2:
-        await update.effective_message.reply_text("Usage: /log <work|study|learn> <duration> [note]")
-        return
-
-    category = context.args[0].lower()
-    if category not in VALID_CATEGORIES:
-        await update.effective_message.reply_text("Category must be one of: work, study, learn")
+    if len(context.args) < 1:
+        await update.effective_message.reply_text("Usage: /log <duration> [note]")
         return
 
     try:
-        minutes = parse_duration_to_minutes(context.args[1])
+        minutes = parse_duration_to_minutes(context.args[0])
     except DurationParseError as exc:
         await update.effective_message.reply_text(str(exc))
         return
 
-    note = " ".join(context.args[2:]).strip() or None
+    note = " ".join(context.args[1:]).strip() or None
     _db(context).add_entry(
         user_id=user_id,
-        entry_type="productive",
-        category=category,
+        kind="productive",
         minutes=minutes,
         note=note,
         created_at=now,
@@ -100,7 +89,7 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     view = compute_status(_db(context), user_id, now)
     await update.effective_message.reply_text(
-        f"Logged {minutes}m {category}.\n\n{status_message(view)}",
+        f"Logged {minutes}m productive.\n\n{status_message(view)}",
         reply_markup=build_keyboard(),
     )
 
@@ -121,8 +110,7 @@ async def cmd_spend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     note = " ".join(context.args[1:]).strip() or None
     _db(context).add_entry(
         user_id=user_id,
-        entry_type="spend",
-        category=None,
+        kind="spend",
         minutes=minutes,
         note=note,
         created_at=now,
@@ -145,11 +133,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = _touch_user(update, context)
     db = _db(context)
     view = compute_status(db, user_id, now)
-    week = week_range_for(now)
-    week_start = week_start_date(now)
-    plan = db.get_plan_target(user_id, week_start)
-    by_category = db.sum_productive_by_category(user_id, start=week.start, end=now)
-    await update.effective_message.reply_text(week_message(view, plan, by_category), reply_markup=build_keyboard())
+    await update.effective_message.reply_text(week_message(view), reply_markup=build_keyboard())
 
 
 async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -166,7 +150,7 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = _db(context)
 
     if not context.args:
-        await update.effective_message.reply_text("Usage: /plan set work 10h study 5h learn 3h OR /plan show")
+        await update.effective_message.reply_text("Usage: /plan set <duration> OR /plan show")
         return
 
     action = context.args[0].lower()
@@ -175,41 +159,28 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not plan:
             await update.effective_message.reply_text("No plan set for this week")
             return
-        await update.effective_message.reply_text(
-            f"Plan this week: work {plan.work_minutes}m, study {plan.study_minutes}m, learn {plan.learn_minutes}m"
-        )
+        target_total = plan.work_minutes + plan.study_minutes + plan.learn_minutes
+        await update.effective_message.reply_text(f"Plan this week (productive): {target_total}m")
         return
 
-    if action != "set":
-        await update.effective_message.reply_text("Usage: /plan set work 10h study 5h learn 3h")
+    if action != "set" or len(context.args) < 2:
+        await update.effective_message.reply_text("Usage: /plan set <duration>")
         return
 
-    payload = context.args[1:]
-    if len(payload) % 2 != 0:
-        await update.effective_message.reply_text("Invalid /plan set format")
-        return
-
-    parsed = {"work": 0, "study": 0, "learn": 0}
     try:
-        for i in range(0, len(payload), 2):
-            category = payload[i].lower()
-            if category not in parsed:
-                raise ValueError("Unknown category in plan")
-            parsed[category] = parse_duration_to_minutes(payload[i + 1])
-    except (ValueError, DurationParseError) as exc:
+        target_minutes = parse_duration_to_minutes(context.args[1])
+    except DurationParseError as exc:
         await update.effective_message.reply_text(f"Plan parse error: {exc}")
         return
 
-    plan = db.set_plan_target(
+    db.set_plan_target(
         user_id=user_id,
         week_start=week_start_date(now),
-        work_minutes=parsed["work"],
-        study_minutes=parsed["study"],
-        learn_minutes=parsed["learn"],
+        work_minutes=target_minutes,
+        study_minutes=0,
+        learn_minutes=0,
     )
-    await update.effective_message.reply_text(
-        f"Plan saved for week: work {plan.work_minutes}m, study {plan.study_minutes}m, learn {plan.learn_minutes}m"
-    )
+    await update.effective_message.reply_text(f"Plan saved for week (productive): {target_minutes}m")
 
 
 async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -246,28 +217,19 @@ async def cmd_quiet_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = _touch_user(update, context)
 
-    if not context.args:
-        await update.effective_message.reply_text(
-            "Timer: /start <work|study|learn> [note], /stop\n"
-            "Also available: /log, /spend, /status, /week, /undo",
-            reply_markup=build_keyboard(),
-        )
-        return
+    if context.args and context.args[0].lower() == "productive":
+        note = " ".join(context.args[1:]).strip() or None
+    else:
+        note = " ".join(context.args).strip() or None
 
-    category = context.args[0].lower()
-    if category not in VALID_CATEGORIES:
-        await update.effective_message.reply_text("Category must be one of: work, study, learn")
-        return
-
-    note = " ".join(context.args[1:]).strip() or None
-    existing, created = _db(context).get_or_start_timer(user_id, category, now, note)
+    existing, created = _db(context).get_or_start_timer(user_id, now, note)
     if existing:
         await update.effective_message.reply_text(
-            f"A timer is already running for {existing.category} since {existing.started_at.strftime('%H:%M')}"
+            f"A timer is already running since {existing.started_at.strftime('%H:%M')}"
         )
         return
 
-    await update.effective_message.reply_text(f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}")
+    await update.effective_message.reply_text(f"Productive timer started at {created.started_at.strftime('%H:%M')}")
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -285,8 +247,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     db.add_entry(
         user_id=user_id,
-        entry_type="productive",
-        category=session.category,
+        kind="productive",
         minutes=minutes,
         note=session.note,
         created_at=now,
@@ -295,7 +256,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     view = compute_status(db, user_id, now)
     await update.effective_message.reply_text(
-        f"Stopped timer: logged {minutes}m {session.category}.\n\n{status_message(view)}",
+        f"Stopped timer: logged {minutes}m productive.\n\n{status_message(view)}",
         reply_markup=build_keyboard(),
     )
 
@@ -309,19 +270,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     db = _db(context)
     data = query.data or ""
 
-    if data.startswith("log:"):
-        _, category, minutes_raw = data.split(":", maxsplit=2)
+    if data.startswith("productive:") or data.startswith("spend:"):
+        kind, minutes_raw = data.split(":", maxsplit=1)
         minutes = int(minutes_raw)
         db.add_entry(
             user_id=user_id,
-            entry_type="productive",
-            category=category,
+            kind=kind,
             minutes=minutes,
             created_at=now,
             source="button",
         )
         view = compute_status(db, user_id, now)
-        await query.message.reply_text(f"Logged {minutes}m {category}.\n\n{status_message(view)}", reply_markup=build_keyboard())
+        verb = "productive" if kind == "productive" else "fun spend"
+        await query.message.reply_text(
+            f"Logged {minutes}m {verb}.\n\n{status_message(view)}",
+            reply_markup=build_keyboard(),
+        )
         return
 
     if data == "status":
@@ -331,10 +295,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "week":
         view = compute_status(db, user_id, now)
-        week = week_range_for(now)
-        plan = db.get_plan_target(user_id, week_start_date(now))
-        by_category = db.sum_productive_by_category(user_id, start=week.start, end=now)
-        await query.message.reply_text(week_message(view, plan, by_category), reply_markup=build_keyboard())
+        await query.message.reply_text(week_message(view), reply_markup=build_keyboard())
         return
 
     if data == "undo":
@@ -365,27 +326,14 @@ async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     db = _db(context)
-    if parsed.action == "log" and parsed.category:
-        db.add_entry(
-            user_id=user_id,
-            entry_type="productive",
-            category=parsed.category,
-            minutes=parsed.minutes,
-            note=parsed.note,
-            created_at=now,
-            source="llm",
-        )
-    elif parsed.action == "spend":
-        db.add_entry(
-            user_id=user_id,
-            entry_type="spend",
-            minutes=parsed.minutes,
-            note=parsed.note,
-            created_at=now,
-            source="llm",
-        )
-    else:
-        return
+    db.add_entry(
+        user_id=user_id,
+        kind="productive" if parsed.action == "log" else "spend",
+        minutes=parsed.minutes,
+        note=parsed.note,
+        created_at=now,
+        source="llm",
+    )
 
     view = compute_status(db, user_id, now)
     await update.effective_message.reply_text(f"Parsed and logged via LLM.\n\n{status_message(view)}")

@@ -9,7 +9,7 @@ Implemented in required order:
 2. Sunday summary job (`python jobs.py sunday_summary`)
 3. Reminders job (`python jobs.py reminders`): inactivity + daily goal
 4. Plan targets (`/plan set`, `/plan show`) + midweek job (`python jobs.py midweek`)
-5. Start/stop timer sessions (`/start <category>`, `/stop`)
+5. Start/stop timer sessions (`/start [note]`, `/stop`)
 6. Optional LLM parsing of free-form text (GPT-5 mini) with strict local validation
 
 ## Business rules
@@ -61,26 +61,25 @@ uv run python -m bot
 
 ## Commands
 
-- `/log <work|study|learn> <duration> [note]`
+- `/log <duration> [note]`
 - `/spend <duration> [note]`
 - `/status`
 - `/week`
 - `/undo`
-- `/plan set work 10h study 5h learn 3h`
+- `/plan set 10h`
 - `/plan show`
 - `/reminders on`
 - `/reminders off`
 - `/quiet_hours 22:00-08:00`
-- `/start <work|study|learn> [note]`
+- `/start [note]`
 - `/stop`
 
 Duration formats: `90m`, `1.5h`, `1h20m`, `45`
 
 ## Inline keyboard
 
-- `+15m Work`, `+30m Work`, `+60m Work`
-- `+15m Study`, `+30m Study`, `+60m Study`
-- `+15m Learn`, `+30m Learn`, `+60m Learn`
+- `+15m Productive`, `+30m Productive`, `+60m Productive`
+- `-15m Fun`, `-30m Fun`, `-60m Fun`
 - `Status`, `Week`, `Undo last`
 
 ## Scheduled jobs (cron-friendly)
@@ -106,10 +105,10 @@ uv run python jobs.py midweek
 
 ## Sample interactions
 
-- `/log work 1h20m Deep focus` -> logs 80 productive minutes and returns updated totals + fun left
-- `/spend 45m Movie break` -> logs fun spending and returns updated fun left
-- `/plan set work 10h study 5h learn 3h` -> stores current week targets
-- `/start study reading` then `/stop` -> logs elapsed productive minutes in study category
+- `/log 1h20m Deep focus` -> logs 80 productive minutes and returns updated totals + fun remaining
+- `/spend 45m Movie break` -> logs fun spending and returns updated fun remaining
+- `/plan set 10h` -> stores current week productive target
+- `/start Deep focus` then `/stop` -> logs elapsed productive minutes
 
 ## Tests
 
@@ -122,6 +121,22 @@ Covered:
 - fun rules + milestone boundaries (`599m`, `600m`, `1200m`)
 - Oslo week boundaries (Mon-Sun)
 - reminder trigger decision logic
+
+## Migration
+
+Schema migration runs automatically on startup (bot and jobs) via `schema_migrations`.
+
+This update adds `entries.kind` and migrates existing rows:
+- `work/study/learn -> productive`
+- `spend -> spend`
+
+Safe manual run path:
+
+```bash
+uv run python jobs.py reminders
+```
+
+This initializes the DB and applies pending migrations without requiring bot polling.
 
 ## Notes
 

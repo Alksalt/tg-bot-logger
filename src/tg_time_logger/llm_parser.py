@@ -4,13 +4,11 @@ import json
 from dataclasses import dataclass
 
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
-from tg_time_logger.service import VALID_CATEGORIES
 
 
 @dataclass(frozen=True)
 class ParsedAction:
     action: str
-    category: str | None
     minutes: int
     note: str | None
 
@@ -24,8 +22,8 @@ def parse_free_form_with_llm(
     client = OpenAI(api_key=api_key)
     prompt = (
         "Extract a single action from the message as JSON with keys: "
-        "action ('log' or 'spend'), category ('work'|'study'|'learn' or null for spend), "
-        "duration (string), note (string or null). Return JSON only."
+        "action ('log' or 'spend'), duration (string), note (string or null). "
+        "Return JSON only."
     )
 
     response = client.responses.create(
@@ -46,16 +44,11 @@ def parse_free_form_with_llm(
         return None
 
     action = payload.get("action")
-    category = payload.get("category")
     duration = payload.get("duration")
     note = payload.get("note")
 
     if action not in {"log", "spend"}:
         return None
-    if action == "log" and category not in VALID_CATEGORIES:
-        return None
-    if action == "spend":
-        category = None
 
     if not isinstance(duration, str):
         return None
@@ -68,4 +61,4 @@ def parse_free_form_with_llm(
     if note is not None and not isinstance(note, str):
         note = None
 
-    return ParsedAction(action=action, category=category, minutes=minutes, note=note)
+    return ParsedAction(action=action, minutes=minutes, note=note)

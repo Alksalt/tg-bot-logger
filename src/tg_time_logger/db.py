@@ -11,8 +11,7 @@ from typing import Any
 class Entry:
     id: int
     user_id: int
-    entry_type: str
-    category: str | None
+    kind: str
     minutes: int
     note: str | None
     created_at: datetime
@@ -23,7 +22,6 @@ class Entry:
 @dataclass(frozen=True)
 class TimerSession:
     user_id: int
-    category: str
     note: str | None
     started_at: datetime
 
@@ -121,6 +119,20 @@ class Database:
                         PRIMARY KEY(user_id, event_key)
                     );
                 """,
+                2: """
+                    ALTER TABLE entries ADD COLUMN kind TEXT;
+
+                    UPDATE entries
+                    SET kind = CASE
+                        WHEN lower(COALESCE(category, '')) IN ('work', 'study', 'learn') THEN 'productive'
+                        WHEN lower(COALESCE(category, '')) = 'spend' THEN 'spend'
+                        WHEN lower(COALESCE(entry_type, '')) = 'spend' THEN 'spend'
+                        ELSE 'productive'
+                    END
+                    WHERE kind IS NULL;
+
+                    CREATE INDEX IF NOT EXISTS idx_entries_user_kind_created ON entries(user_id, kind, created_at);
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -196,20 +208,22 @@ class Database:
     def add_entry(
         self,
         user_id: int,
-        entry_type: str,
+        kind: str,
         minutes: int,
         created_at: datetime,
-        category: str | None = None,
         note: str | None = None,
         source: str = "manual",
     ) -> Entry:
+        if kind not in {"productive", "spend"}:
+            raise ValueError("kind must be productive or spend")
+
         with self._connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO entries(user_id, entry_type, category, minutes, note, created_at, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO entries(user_id, entry_type, category, kind, minutes, note, created_at, source)
+                VALUES (?, ?, NULL, ?, ?, ?, ?, ?)
                 """,
-                (user_id, entry_type, category, minutes, note, created_at.isoformat(), source),
+                (user_id, kind, kind, minutes, note, created_at.isoformat(), source),
             )
             row = conn.execute("SELECT * FROM entries WHERE id = ?", (cursor.lastrowid,)).fetchone()
         assert row is not None
@@ -239,12 +253,12 @@ class Database:
     def sum_minutes(
         self,
         user_id: int,
-        entry_type: str,
+        kind: str,
         start: datetime | None = None,
         end: datetime | None = None,
     ) -> int:
-        conditions = ["user_id = ?", "entry_type = ?", "deleted_at IS NULL"]
-        params: list[Any] = [user_id, entry_type]
+        conditions = ["user_id = ?", "kind = ?", "deleted_at IS NULL"]
+        params: list[Any] = [user_id, kind]
         if start is not None:
             conditions.append("created_at >= ?")
             params.append(start.isoformat())
@@ -257,38 +271,13 @@ class Database:
             row = conn.execute(query, params).fetchone()
         return int(row["total"]) if row else 0
 
-    def sum_productive_by_category(
-        self,
-        user_id: int,
-        start: datetime | None = None,
-        end: datetime | None = None,
-    ) -> dict[str, int]:
-        conditions = ["user_id = ?", "entry_type = 'productive'", "deleted_at IS NULL"]
-        params: list[Any] = [user_id]
-        if start is not None:
-            conditions.append("created_at >= ?")
-            params.append(start.isoformat())
-        if end is not None:
-            conditions.append("created_at < ?")
-            params.append(end.isoformat())
-
-        query = f"SELECT category, COALESCE(SUM(minutes), 0) AS total FROM entries WHERE {' AND '.join(conditions)} GROUP BY category"
-        result = {"work": 0, "study": 0, "learn": 0}
-        with self._connect() as conn:
-            rows = conn.execute(query, params).fetchall()
-        for row in rows:
-            category = row["category"]
-            if category in result:
-                result[category] = int(row["total"])
-        return result
-
     def has_productive_log_between(self, user_id: int, start: datetime, end: datetime) -> bool:
         with self._connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1 FROM entries
                 WHERE user_id = ?
-                  AND entry_type = 'productive'
+                  AND kind = 'productive'
                   AND deleted_at IS NULL
                   AND created_at >= ?
                   AND created_at < ?
@@ -301,23 +290,22 @@ class Database:
     def get_or_start_timer(
         self,
         user_id: int,
-        category: str,
         started_at: datetime,
         note: str | None,
     ) -> tuple[TimerSession | None, TimerSession]:
         with self._connect() as conn:
             existing = conn.execute(
-                "SELECT user_id, category, note, started_at FROM timer_sessions WHERE user_id = ?",
+                "SELECT user_id, note, started_at FROM timer_sessions WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
             if existing:
                 return _row_to_timer(existing), _row_to_timer(existing)
             conn.execute(
-                "INSERT INTO timer_sessions(user_id, category, note, started_at) VALUES (?, ?, ?, ?)",
-                (user_id, category, note, started_at.isoformat()),
+                "INSERT INTO timer_sessions(user_id, category, note, started_at) VALUES (?, 'productive', ?, ?)",
+                (user_id, note, started_at.isoformat()),
             )
             created = conn.execute(
-                "SELECT user_id, category, note, started_at FROM timer_sessions WHERE user_id = ?",
+                "SELECT user_id, note, started_at FROM timer_sessions WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         assert created is not None
@@ -326,7 +314,7 @@ class Database:
     def stop_timer(self, user_id: int) -> TimerSession | None:
         with self._connect() as conn:
             existing = conn.execute(
-                "SELECT user_id, category, note, started_at FROM timer_sessions WHERE user_id = ?",
+                "SELECT user_id, note, started_at FROM timer_sessions WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
             if existing is None:
@@ -390,11 +378,20 @@ class Database:
 
 
 def _row_to_entry(row: sqlite3.Row) -> Entry:
+    legacy_category = (row["category"] or "") if "category" in row.keys() else ""
+    kind = row["kind"] if "kind" in row.keys() else None
+    if not kind:
+        if legacy_category.lower() in {"work", "study", "learn"}:
+            kind = "productive"
+        elif legacy_category.lower() == "spend" or row["entry_type"] == "spend":
+            kind = "spend"
+        else:
+            kind = "productive"
+
     return Entry(
         id=row["id"],
         user_id=row["user_id"],
-        entry_type=row["entry_type"],
-        category=row["category"],
+        kind=kind,
         minutes=row["minutes"],
         note=row["note"],
         created_at=datetime.fromisoformat(row["created_at"]),
@@ -406,7 +403,6 @@ def _row_to_entry(row: sqlite3.Row) -> Entry:
 def _row_to_timer(row: sqlite3.Row) -> TimerSession:
     return TimerSession(
         user_id=row["user_id"],
-        category=row["category"],
         note=row["note"],
         started_at=datetime.fromisoformat(row["started_at"]),
     )

@@ -41,9 +41,7 @@ async def run_sunday_summary(db: Database, token: str, tz_name: str) -> None:
         user_id = int(profile["user_id"])
         chat_id = int(profile["chat_id"])
         view = compute_status(db, user_id, now)
-        by_category = db.sum_productive_by_category(user_id, start=week_range_for(now).start, end=now)
-        plan = db.get_plan_target(user_id, week_start_date(now))
-        text = "Weekly summary (Sunday)\n" + week_message(view, plan, by_category)
+        text = "Weekly summary (Sunday)\n" + week_message(view)
         await bot.send_message(chat_id=chat_id, text=text)
         logger.info("sent sunday summary user_id=%s", user_id)
 
@@ -112,20 +110,21 @@ async def run_midweek(db: Database, token: str, tz_name: str) -> None:
         if db.was_event_sent(user_id, event_key):
             continue
 
-        by_category = db.sum_productive_by_category(user_id, start=week.start, end=now)
         plan = db.get_plan_target(user_id, week_start_date(now))
         if not plan:
             continue
 
-        lines = ["Midweek progress (Wednesday 19:00)"]
-        for category in ("work", "study", "learn"):
-            done = by_category.get(category, 0)
-            target = getattr(plan, f"{category}_minutes")
-            remaining = max(target - done, 0)
-            lines.append(
-                f"{category}: done {format_minutes_hm(done)} / target {format_minutes_hm(target)} / remaining {format_minutes_hm(remaining)}"
-            )
-        await bot.send_message(chat_id=chat_id, text="\n".join(lines))
+        target = plan.work_minutes + plan.study_minutes + plan.learn_minutes
+        done = db.sum_minutes(user_id, "productive", start=week.start, end=now)
+        remaining = max(target - done, 0)
+
+        text = (
+            "Midweek progress (Wednesday 19:00)\n"
+            f"Productive: done {format_minutes_hm(done)} / "
+            f"target {format_minutes_hm(target)} / "
+            f"remaining {format_minutes_hm(remaining)}"
+        )
+        await bot.send_message(chat_id=chat_id, text=text)
         db.mark_event_sent(user_id, event_key, now)
         logger.info("sent midweek message user_id=%s", user_id)
 
