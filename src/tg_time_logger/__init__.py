@@ -1,0 +1,1 @@
+"""Telegram time logger package."""
