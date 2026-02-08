@@ -30,12 +30,10 @@ Implemented in required order:
 - `/tests/` pytest suite
 - `/data/app.db` SQLite DB (default)
 
-## Setup
+## Setup (uv)
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
+uv sync --extra dev
 cp .env.example .env
 ```
 
@@ -56,9 +54,9 @@ OPENAI_API_KEY=<key>
 ## Run locally
 
 ```bash
-python bot.py
+uv run python bot.py
 # or
-python -m bot
+uv run python -m bot
 ```
 
 ## Commands
@@ -88,22 +86,22 @@ Duration formats: `90m`, `1.5h`, `1h20m`, `45`
 ## Scheduled jobs (cron-friendly)
 
 ```bash
-python jobs.py sunday_summary
-python jobs.py reminders
-python jobs.py midweek
+uv run python jobs.py sunday_summary
+uv run python jobs.py reminders
+uv run python jobs.py midweek
 ```
 
 ### Example cron
 
 ```cron
 # Sunday summary at 19:00 Oslo time
-0 19 * * 0 cd /path/to/tg-time-logger && /path/to/.venv/bin/python jobs.py sunday_summary
+0 19 * * 0 cd /path/to/tg-time-logger && /opt/homebrew/bin/uv run python jobs.py sunday_summary
 
 # Reminders every 15 minutes (job checks time thresholds + deduplicates)
-*/15 * * * * cd /path/to/tg-time-logger && /path/to/.venv/bin/python jobs.py reminders
+*/15 * * * * cd /path/to/tg-time-logger && /opt/homebrew/bin/uv run python jobs.py reminders
 
 # Midweek progress every 15 minutes on Wednesday (deduplicated per week)
-*/15 * * * 3 cd /path/to/tg-time-logger && /path/to/.venv/bin/python jobs.py midweek
+*/15 * * * 3 cd /path/to/tg-time-logger && /opt/homebrew/bin/uv run python jobs.py midweek
 ```
 
 ## Sample interactions
@@ -116,7 +114,7 @@ python jobs.py midweek
 ## Tests
 
 ```bash
-pytest
+uv run pytest
 ```
 
 Covered:
