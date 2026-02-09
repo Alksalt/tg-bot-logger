@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 from telegram import Bot
 
-from tg_time_logger.db import Database
-from tg_time_logger.economy import format_minutes_hm
-from tg_time_logger.messages import week_message
+from tg_time_logger.config import Settings
+from tg_time_logger.db import Database, Quest
+from tg_time_logger.gamification import format_minutes_hm, spin_wheel
+from tg_time_logger.llm_messages import LlmContext, weekly_summary_message
+from tg_time_logger.llm_router import LlmRoute
+from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests, evaluate_quest_progress
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
 
@@ -33,23 +37,76 @@ def evaluate_reminders(
     return ReminderDecision(inactivity=inactivity_due, daily_goal=goal_due)
 
 
-async def run_sunday_summary(db: Database, token: str, tz_name: str) -> None:
-    now = now_local(tz_name)
-    bot = Bot(token=token)
-    profiles = db.get_all_user_profiles()
-    for profile in profiles:
+def _quest_line(db: Database, user_id: int, quest: Quest, now: datetime) -> str:
+    progress = evaluate_quest_progress(db, user_id, quest, now)
+    if progress.target <= 0:
+        return f"- {quest.title}: active"
+    return f"- {quest.title}: {progress.current}/{progress.target} {progress.unit}"
+
+
+async def run_sunday_summary(db: Database, settings: Settings) -> None:
+    now = now_local(settings.tz)
+    bot = Bot(token=settings.telegram_bot_token)
+    week = week_range_for(now)
+
+    for profile in db.get_all_user_profiles():
         user_id = int(profile["user_id"])
         chat_id = int(profile["chat_id"])
         view = compute_status(db, user_id, now)
-        text = "Weekly summary (Sunday)\n" + week_message(view)
+
+        plan = db.get_plan_target(user_id, week.start.date())
+        target = plan.total_target_minutes if plan else 0
+        met = target > 0 and view.week.productive_minutes >= target
+
+        wheel_msg = ""
+        if met and not db.has_wheel_spin(user_id, week.start.date()):
+            result_text, bonus = spin_wheel()
+            if db.add_wheel_spin(user_id, week.start.date(), bonus, now):
+                wheel_msg = (
+                    "\n\n🎡 Weekly Wheel Spin!\n"
+                    "You hit your target this week — time to spin!\n\n"
+                    f"{result_text} +{bonus} fun minutes!"
+                )
+
+        categories = view.week_categories
+        facts = (
+            f"- Total productive: {view.week.productive_minutes / 60:.2f}h "
+            f"(study: {categories['study'] / 60:.2f}h, build: {categories['build'] / 60:.2f}h, "
+            f"training: {categories['training'] / 60:.2f}h, job: {categories['job'] / 60:.2f}h)\n"
+            f"- Fun spent: {view.week.spent_minutes} min\n"
+            f"- Plan target: {target / 60:.2f}h — {'MET ✅' if met else 'MISSED ❌'} ({view.week.productive_minutes / 60:.2f}h)\n"
+            f"- XP gained: {view.xp_week}\n"
+            f"- Streak: {view.streak_current} days\n"
+            f"- Quests active: {view.active_quests}\n"
+            f"- Deep work sessions (90+ min): {view.deep_sessions_week}"
+        )
+
+        ctx = LlmContext(
+            enabled=settings.llm_enabled,
+            route=LlmRoute(
+                provider=settings.llm_provider,
+                model=settings.llm_model,
+                api_key=settings.llm_api_key,
+            ),
+        )
+        summary = weekly_summary_message(ctx, facts)
+
+        text = (
+            "Weekly summary (Sunday)\n"
+            f"Productive: {format_minutes_hm(view.week.productive_minutes)}\n"
+            f"Spent: {format_minutes_hm(view.week.spent_minutes)}\n"
+            f"Fun remaining: {format_minutes_hm(view.economy.remaining_fun_minutes)}\n\n"
+            f"{summary}"
+            f"{wheel_msg}"
+        )
         await bot.send_message(chat_id=chat_id, text=text)
         logger.info("sent sunday summary user_id=%s", user_id)
 
 
-async def run_reminders(db: Database, token: str, tz_name: str) -> None:
-    now = now_local(tz_name)
+async def run_reminders(db: Database, settings: Settings) -> None:
+    now = now_local(settings.tz)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    bot = Bot(token=token)
+    bot = Bot(token=settings.telegram_bot_token)
 
     for profile in db.get_all_user_profiles():
         user_id = int(profile["user_id"])
@@ -57,6 +114,22 @@ async def run_reminders(db: Database, token: str, tz_name: str) -> None:
         reminders_enabled = bool(profile.get("reminders_enabled", 1))
         daily_goal = int(profile.get("daily_goal_minutes") or 60)
         quiet_hours = profile.get("quiet_hours")
+
+        # Auto-save deposit once per day.
+        auto_save = int(profile.get("auto_save_minutes") or 0)
+        auto_event = f"autosave:{now.date().isoformat()}"
+        if auto_save > 0 and not db.was_event_sent(user_id, auto_event):
+            status = compute_status(db, user_id, now)
+            available = max(status.economy.remaining_fun_minutes, 0)
+            amount = min(auto_save, available)
+            if amount > 0:
+                goal = db.deposit_to_savings(user_id, amount, now)
+                if goal:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"🏦 Auto-saved {amount} fun minutes into '{goal.name}'.",
+                    )
+            db.mark_event_sent(user_id, auto_event, now)
 
         if not reminders_enabled:
             continue
@@ -93,9 +166,9 @@ async def run_reminders(db: Database, token: str, tz_name: str) -> None:
                 logger.info("sent daily goal reminder user_id=%s", user_id)
 
 
-async def run_midweek(db: Database, token: str, tz_name: str) -> None:
-    now = now_local(tz_name)
-    bot = Bot(token=token)
+async def run_midweek(db: Database, settings: Settings) -> None:
+    now = now_local(settings.tz)
+    bot = Bot(token=settings.telegram_bot_token)
     week = week_range_for(now)
 
     for profile in db.get_all_user_profiles():
@@ -114,27 +187,50 @@ async def run_midweek(db: Database, token: str, tz_name: str) -> None:
         if not plan:
             continue
 
-        target = plan.work_minutes + plan.study_minutes + plan.learn_minutes
+        target = plan.total_target_minutes
         done = db.sum_minutes(user_id, "productive", start=week.start, end=now)
         remaining = max(target - done, 0)
+        cats = db.sum_productive_by_category(user_id, start=week.start, end=now)
 
         text = (
             "Midweek progress (Wednesday 19:00)\n"
-            f"Productive: done {format_minutes_hm(done)} / "
-            f"target {format_minutes_hm(target)} / "
-            f"remaining {format_minutes_hm(remaining)}"
+            f"Total: {format_minutes_hm(done)} / {format_minutes_hm(target)} (remaining {format_minutes_hm(remaining)})\n"
+            f"Study {format_minutes_hm(cats['study'])}, Build {format_minutes_hm(cats['build'])}, "
+            f"Training {format_minutes_hm(cats['training'])}, Job {format_minutes_hm(cats['job'])}"
         )
         await bot.send_message(chat_id=chat_id, text=text)
         db.mark_event_sent(user_id, event_key, now)
         logger.info("sent midweek message user_id=%s", user_id)
 
 
-def run_job(job_name: str, db: Database, token: str, tz_name: str) -> None:
+async def run_check_quests(db: Database, settings: Settings) -> None:
+    now = now_local(settings.tz)
+    bot = Bot(token=settings.telegram_bot_token)
+
+    for profile in db.get_all_user_profiles():
+        user_id = int(profile["user_id"])
+        chat_id = int(profile["chat_id"])
+
+        ensure_weekly_quests(db, user_id, now)
+        completed = check_quests_for_user(db, user_id, now)
+        for item in completed:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"✅ Quest completed: {item.quest.title}\n"
+                    f"Reward: +{item.quest.reward_fun_minutes} fun minutes"
+                ),
+            )
+
+
+def run_job(job_name: str, db: Database, settings: Settings) -> None:
     if job_name == "sunday_summary":
-        asyncio.run(run_sunday_summary(db, token, tz_name))
+        asyncio.run(run_sunday_summary(db, settings))
     elif job_name == "reminders":
-        asyncio.run(run_reminders(db, token, tz_name))
+        asyncio.run(run_reminders(db, settings))
     elif job_name == "midweek":
-        asyncio.run(run_midweek(db, token, tz_name))
+        asyncio.run(run_midweek(db, settings))
+    elif job_name == "check_quests":
+        asyncio.run(run_check_quests(db, settings))
     else:
-        raise SystemExit(f"Unknown job '{job_name}'. Expected one of: sunday_summary, reminders, midweek")
+        raise SystemExit(f"Unknown job '{job_name}'. Expected one of: sunday_summary, reminders, midweek, check_quests")

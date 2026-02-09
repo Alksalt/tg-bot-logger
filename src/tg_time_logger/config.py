@@ -4,14 +4,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from tg_time_logger.llm_router import LlmRoute, load_router_config, resolve_route
+
 
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
     database_path: Path
     tz: str
-    openai_api_key: str | None
     llm_enabled: bool
+    llm_provider: str
+    llm_model: str
+    llm_api_key: str | None
+    llm_router_config_path: Path
 
 
 def _load_env_file(path: Path) -> None:
@@ -43,13 +48,23 @@ def load_settings() -> Settings:
 
     db_path = Path(os.getenv("DATABASE_PATH", "./data/app.db"))
     tz = os.getenv("TZ", "Europe/Oslo")
-    openai_api_key = os.getenv("OPENAI_API_KEY")
     llm_enabled = _parse_bool(os.getenv("LLM_ENABLED", "0"), default=False)
+    router_path = Path(os.getenv("LLM_ROUTER_CONFIG", "./llm_router.yaml"))
+    router_cfg = load_router_config(router_path)
+    route: LlmRoute = resolve_route(
+        config=router_cfg,
+        provider_override=os.getenv("LLM_PROVIDER"),
+        model_override=os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL"),
+        env_getter=os.getenv,
+    )
 
     return Settings(
         telegram_bot_token=token,
         database_path=db_path,
         tz=tz,
-        openai_api_key=openai_api_key,
         llm_enabled=llm_enabled,
+        llm_provider=route.provider,
+        llm_model=route.model,
+        llm_api_key=route.api_key,
+        llm_router_config_path=router_path,
     )

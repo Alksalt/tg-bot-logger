@@ -16,12 +16,12 @@ from tg_time_logger.logging_setup import setup_logging
 
 def main() -> None:
     if len(sys.argv) != 2:
-        raise SystemExit("Usage: python jobs.py <sunday_summary|reminders|midweek>")
+        raise SystemExit("Usage: python jobs.py <sunday_summary|reminders|midweek|check_quests>")
 
     setup_logging()
     settings = load_settings()
     db = Database(settings.database_path)
-    run_job(sys.argv[1], db, settings.telegram_bot_token, settings.tz)
+    run_job(sys.argv[1], db, settings)
 
 
 if __name__ == "__main__":
