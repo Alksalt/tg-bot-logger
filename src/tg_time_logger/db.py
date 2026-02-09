@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES, fun_from_minutes, level_from_xp
+from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES, fun_from_minutes, level_from_xp, level_up_bonus_minutes
 
 
 @dataclass(frozen=True)
@@ -110,6 +110,14 @@ class SavingsGoal:
     status: str
     created_at: datetime
     completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class LlmUsage:
+    user_id: int
+    day_key: str
+    request_count: int
+    last_request_at: datetime | None
 
 
 DEFAULT_SHOP_ITEMS: list[tuple[str, str, int, float]] = [
@@ -365,6 +373,15 @@ class Database:
                         0
                     FROM plan_targets;
                 """,
+                11: """
+                    CREATE TABLE IF NOT EXISTS llm_usage (
+                        user_id INTEGER NOT NULL,
+                        day_key TEXT NOT NULL,
+                        request_count INTEGER NOT NULL DEFAULT 0,
+                        last_request_at TEXT,
+                        PRIMARY KEY(user_id, day_key)
+                    );
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -378,6 +395,7 @@ class Database:
                 )
 
             self._backfill_level_up_events(conn, now)
+            self._sync_level_up_event_bonuses(conn)
 
     def _backfill_level_up_events(self, conn: sqlite3.Connection, created_at: str) -> None:
         users = conn.execute(
@@ -397,7 +415,17 @@ class Database:
                     INSERT OR IGNORE INTO level_up_events(user_id, level, bonus_fun_minutes, created_at)
                     VALUES (?, ?, ?, ?)
                     """,
-                    (user_id, lvl, lvl * 60, created_at),
+                    (user_id, lvl, level_up_bonus_minutes(lvl), created_at),
+                )
+
+    def _sync_level_up_event_bonuses(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("SELECT id, level, bonus_fun_minutes FROM level_up_events").fetchall()
+        for row in rows:
+            expected = level_up_bonus_minutes(int(row["level"]))
+            if int(row["bonus_fun_minutes"]) != expected:
+                conn.execute(
+                    "UPDATE level_up_events SET bonus_fun_minutes = ? WHERE id = ?",
+                    (expected, row["id"]),
                 )
 
     def upsert_user_profile(self, user_id: int, chat_id: int, seen_at: datetime) -> None:
@@ -831,6 +859,41 @@ class Database:
                 (user_id, event_key, sent_at.isoformat()),
             )
 
+    def get_llm_usage(self, user_id: int, day_key: str) -> LlmUsage:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO llm_usage(user_id, day_key, request_count, last_request_at) VALUES (?, ?, 0, NULL)",
+                (user_id, day_key),
+            )
+            row = conn.execute(
+                "SELECT user_id, day_key, request_count, last_request_at FROM llm_usage WHERE user_id = ? AND day_key = ?",
+                (user_id, day_key),
+            ).fetchone()
+        assert row is not None
+        return _row_to_llm_usage(row)
+
+    def increment_llm_usage(self, user_id: int, day_key: str, now: datetime) -> LlmUsage:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO llm_usage(user_id, day_key, request_count, last_request_at) VALUES (?, ?, 0, NULL)",
+                (user_id, day_key),
+            )
+            conn.execute(
+                """
+                UPDATE llm_usage
+                SET request_count = request_count + 1,
+                    last_request_at = ?
+                WHERE user_id = ? AND day_key = ?
+                """,
+                (now.isoformat(), user_id, day_key),
+            )
+            row = conn.execute(
+                "SELECT user_id, day_key, request_count, last_request_at FROM llm_usage WHERE user_id = ? AND day_key = ?",
+                (user_id, day_key),
+            ).fetchone()
+        assert row is not None
+        return _row_to_llm_usage(row)
+
     def get_streak(self, user_id: int, now: datetime) -> Streak:
         with self._connect() as conn:
             row = conn.execute(
@@ -949,7 +1012,7 @@ class Database:
                 INSERT OR IGNORE INTO level_up_events(user_id, level, bonus_fun_minutes, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, level, level * 60, created_at.isoformat()),
+                (user_id, level, level_up_bonus_minutes(level), created_at.isoformat()),
             )
             if cur.rowcount == 0:
                 return None
@@ -983,6 +1046,18 @@ class Database:
                 (user_id, start.isoformat(), end.isoformat()),
             ).fetchall()
         return [_row_to_quest(r) for r in rows]
+
+    def list_recent_quest_titles(self, user_id: int, since: datetime) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT title
+                FROM quests
+                WHERE user_id = ? AND created_at >= ?
+                """,
+                (user_id, since.isoformat()),
+            ).fetchall()
+        return {str(r["title"]) for r in rows}
 
     def insert_quest(
         self,
@@ -1328,4 +1403,13 @@ def _row_to_savings(row: sqlite3.Row) -> SavingsGoal:
         status=row["status"],
         created_at=datetime.fromisoformat(row["created_at"]),
         completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+    )
+
+
+def _row_to_llm_usage(row: sqlite3.Row) -> LlmUsage:
+    return LlmUsage(
+        user_id=row["user_id"],
+        day_key=row["day_key"],
+        request_count=int(row["request_count"]),
+        last_request_at=datetime.fromisoformat(row["last_request_at"]) if row["last_request_at"] else None,
     )

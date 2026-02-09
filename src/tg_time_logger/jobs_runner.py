@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -9,11 +8,11 @@ from datetime import datetime, time, timedelta
 from telegram import Bot
 
 from tg_time_logger.config import Settings
-from tg_time_logger.db import Database, Quest
+from tg_time_logger.db import Database
 from tg_time_logger.gamification import format_minutes_hm, spin_wheel
 from tg_time_logger.llm_messages import LlmContext, weekly_summary_message
 from tg_time_logger.llm_router import LlmRoute
-from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests, evaluate_quest_progress
+from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
 
@@ -35,13 +34,6 @@ def evaluate_reminders(
     inactivity_due = now.time() >= time(hour=20, minute=0) and not has_productive_log_today
     goal_due = now.time() >= time(hour=21, minute=30) and productive_today_minutes < daily_goal_minutes
     return ReminderDecision(inactivity=inactivity_due, daily_goal=goal_due)
-
-
-def _quest_line(db: Database, user_id: int, quest: Quest, now: datetime) -> str:
-    progress = evaluate_quest_progress(db, user_id, quest, now)
-    if progress.target <= 0:
-        return f"- {quest.title}: active"
-    return f"- {quest.title}: {progress.current}/{progress.target} {progress.unit}"
 
 
 async def run_sunday_summary(db: Database, settings: Settings) -> None:
@@ -211,7 +203,17 @@ async def run_check_quests(db: Database, settings: Settings) -> None:
         user_id = int(profile["user_id"])
         chat_id = int(profile["chat_id"])
 
-        ensure_weekly_quests(db, user_id, now)
+        ensure_weekly_quests(
+            db,
+            user_id,
+            now,
+            llm_enabled=settings.llm_enabled,
+            llm_route=LlmRoute(
+                provider=settings.llm_provider,
+                model=settings.llm_model,
+                api_key=settings.llm_api_key,
+            ),
+        )
         completed = check_quests_for_user(db, user_id, now)
         for item in completed:
             await bot.send_message(

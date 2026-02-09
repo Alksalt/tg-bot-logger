@@ -100,7 +100,10 @@ def fun_from_minutes(category: str, minutes: int) -> int:
 def xp_for_level(level: int) -> int:
     if level <= 1:
         return 0
-    return 100 + level * 100
+    if level == 2:
+        return 300
+    k = level - 2
+    return 300 + (80 * k) + (4 * k * k)
 
 
 def total_xp_for_level(level: int) -> int:
@@ -210,6 +213,28 @@ def spin_wheel() -> tuple[str, int]:
     if roll < 0.95:
         return "🎰 Big win!", 120
     return "🎰🎰🎰 JACKPOT!", 300
+
+
+LEVEL_BONUS_MILESTONES = {
+    5: 500,
+    10: 1200,
+    15: 2200,
+    20: 3500,
+    25: 5200,
+    30: 7600,
+    35: 10800,
+    40: 15000,
+    45: 20500,
+    50: 28000,
+}
+
+
+def level_up_bonus_minutes(level: int) -> int:
+    lvl = max(1, level)
+    base = 60 * lvl
+    curve = 5 * lvl * lvl
+    milestone = LEVEL_BONUS_MILESTONES.get(lvl, 0)
+    return base + curve + milestone
 
 
 def format_minutes_hm(minutes: int) -> str:

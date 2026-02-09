@@ -16,12 +16,14 @@ from tg_time_logger.commands_shared import (
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES
 from tg_time_logger.llm_parser import parse_free_form_with_llm
-from tg_time_logger.llm_router import LlmRoute
+from tg_time_logger.llm_router import LlmRoute, call_text
 from tg_time_logger.messages import entry_removed_message, status_message, week_message
 from tg_time_logger.service import add_productive_entry, compute_status, normalize_category
 from tg_time_logger.time_utils import week_range_for, week_start_date
 
 logger = logging.getLogger(__name__)
+LLM_DAILY_LIMIT = 10
+LLM_COOLDOWN_SECONDS = 30
 
 
 async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -302,6 +304,62 @@ async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id, _, now = touch_user(update, context)
+    settings = get_settings(context)
+    db = get_db(context)
+
+    if not settings.llm_enabled or not settings.llm_api_key:
+        await update.effective_message.reply_text("LLM is disabled. Set LLM_ENABLED=1 and provider API key.")
+        return
+
+    question = " ".join(context.args).strip()
+    if not question:
+        await update.effective_message.reply_text("Usage: /llm <question about your stats>")
+        return
+
+    day_key = now.date().isoformat()
+    usage = db.get_llm_usage(user_id, day_key)
+    if usage.request_count >= LLM_DAILY_LIMIT:
+        await update.effective_message.reply_text("Daily /llm limit reached. Try again tomorrow.")
+        return
+    if usage.last_request_at and (now - usage.last_request_at).total_seconds() < LLM_COOLDOWN_SECONDS:
+        await update.effective_message.reply_text("Please wait a bit before the next /llm question.")
+        return
+
+    view = compute_status(db, user_id, now)
+    db.increment_llm_usage(user_id, day_key, now)
+
+    prompt = (
+        "You are an analytics assistant for a gamified productivity tracker. "
+        "Answer the user's question using only the provided stats and be concise.\n\n"
+        f"User question: {question}\n\n"
+        "Stats:\n"
+        f"- Level: {view.level} ({view.title})\n"
+        f"- XP total: {view.xp_total}, XP this week: {view.xp_week}\n"
+        f"- XP to next level: {view.xp_remaining_to_next}\n"
+        f"- Streak: {view.streak_current}, longest: {view.streak_longest}\n"
+        f"- Week productive: {view.week.productive_minutes} min\n"
+        f"- Week spent: {view.week.spent_minutes} min\n"
+        f"- Week category minutes: {view.week_categories}\n"
+        f"- Economy remaining fun: {view.economy.remaining_fun_minutes} min\n"
+        f"- Active quests: {view.active_quests}\n"
+        "\nIf question asks missing data, say what is missing."
+    )
+
+    route = LlmRoute(
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+    )
+    answer = call_text(route, prompt, max_tokens=240)
+    if not answer:
+        await update.effective_message.reply_text("LLM could not answer right now. Try again later.")
+        return
+
+    await update.effective_message.reply_text(answer)
+
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     assert query is not None
@@ -432,5 +490,6 @@ def register_core_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("reminders", cmd_reminders))
     app.add_handler(CommandHandler("quiet_hours", cmd_quiet_hours))
     app.add_handler(CommandHandler("freeze", cmd_freeze))
+    app.add_handler(CommandHandler("llm", cmd_llm))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_form))

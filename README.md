@@ -60,6 +60,7 @@ Core:
 - `/status`
 - `/week`
 - `/undo`
+- `/llm <question>`
 - `/start [study|build|training|job] [note]`
 - `/stop`
 
@@ -100,6 +101,16 @@ This v2 upgrade adds:
 - shop and redemptions
 - weekly wheel spins
 - savings goals
+- llm usage tracking
+
+## Quest Generation
+
+- Every week the system creates exactly:
+  - 1 easy quest
+  - 1 medium quest
+  - 1 hard quest
+- Quest is selected randomly from curated pools (10 per difficulty), with anti-repeat preference.
+- If LLM is enabled, one additional bonus quest can be generated from previous-week stats and then validated before insertion.
 
 ## Test
 

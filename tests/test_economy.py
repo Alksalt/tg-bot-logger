@@ -3,6 +3,7 @@ from tg_time_logger.gamification import (
     deep_work_multiplier,
     fun_from_minutes,
     level_from_xp,
+    level_up_bonus_minutes,
     streak_multiplier,
 )
 
@@ -36,7 +37,18 @@ def test_level_boundaries() -> None:
     assert level_from_xp(0) == 1
     assert level_from_xp(299) == 1
     assert level_from_xp(300) == 2
-    assert level_from_xp(700) == 3
+    assert level_from_xp(683) == 2
+    assert level_from_xp(684) == 3
+
+
+def test_level_bonus_scales_strongly() -> None:
+    assert level_up_bonus_minutes(5) > level_up_bonus_minutes(2)
+    assert level_up_bonus_minutes(25) > (level_up_bonus_minutes(5) * 5)
+
+
+def test_level_milestone_bonus_jumps() -> None:
+    assert level_up_bonus_minutes(10) - level_up_bonus_minutes(9) > 500
+    assert level_up_bonus_minutes(25) - level_up_bonus_minutes(24) > 1500
 
 
 def test_streak_multiplier_thresholds() -> None:

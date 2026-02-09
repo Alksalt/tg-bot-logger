@@ -3,8 +3,9 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from tg_time_logger.commands_shared import touch_user
+from tg_time_logger.commands_shared import get_settings, touch_user
 from tg_time_logger.db import Database
+from tg_time_logger.llm_router import LlmRoute
 from tg_time_logger.quests import ensure_weekly_quests, evaluate_quest_progress
 from tg_time_logger.time_utils import week_range_for
 
@@ -18,6 +19,7 @@ def _db(context: ContextTypes.DEFAULT_TYPE) -> Database:
 async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    settings = get_settings(context)
 
     if context.args and context.args[0].lower() == "history":
         week = week_range_for(now)
@@ -31,7 +33,17 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.effective_message.reply_text("\n".join(lines))
         return
 
-    ensure_weekly_quests(db, user_id, now)
+    ensure_weekly_quests(
+        db,
+        user_id,
+        now,
+        llm_enabled=settings.llm_enabled,
+        llm_route=LlmRoute(
+            provider=settings.llm_provider,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+        ),
+    )
     active = db.list_active_quests(user_id, now)
     if not active:
         await update.effective_message.reply_text("No active quests.")
