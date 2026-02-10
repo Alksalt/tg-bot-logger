@@ -12,7 +12,7 @@ from tg_time_logger.db import Database
 from tg_time_logger.gamification import format_minutes_hm, spin_wheel
 from tg_time_logger.llm_messages import LlmContext, weekly_summary_message
 from tg_time_logger.llm_router import LlmRoute
-from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests
+from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests, evaluate_quest_progress
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
 
@@ -156,6 +156,51 @@ async def run_reminders(db: Database, settings: Settings) -> None:
                 )
                 db.mark_event_sent(user_id, event_key, now)
                 logger.info("sent daily goal reminder user_id=%s", user_id)
+
+        # Near-completion nudges (once per milestone/quest).
+        total_productive = db.sum_minutes(user_id, "productive")
+        next_block = ((total_productive // 600) + 1) * 600
+        to_milestone = next_block - total_productive
+        if 0 < to_milestone <= 120:
+            event_key = f"near-milestone:{next_block}"
+            if not db.was_event_sent(user_id, event_key):
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "⏳ Milestone is close.\n"
+                        f"Only {format_minutes_hm(to_milestone)} left to hit {next_block // 60}h all-time (+3h fun)."
+                    ),
+                )
+                db.mark_event_sent(user_id, event_key, now)
+                logger.info("sent milestone nudge user_id=%s block=%s", user_id, next_block)
+
+        near_sent = 0
+        for quest in db.list_active_quests(user_id, now):
+            if near_sent >= 2:
+                break
+            progress = evaluate_quest_progress(db, user_id, quest, now)
+            if progress.complete or progress.target <= 0:
+                continue
+            remaining = max(progress.target - progress.current, 0)
+            is_near = (
+                (progress.unit == "min" and 0 < remaining <= 120)
+                or (progress.unit == "days" and remaining == 1)
+            )
+            if not is_near:
+                continue
+            event_key = f"near-quest:{quest.id}"
+            if db.was_event_sent(user_id, event_key):
+                continue
+            remaining_txt = format_minutes_hm(remaining) if progress.unit == "min" else f"{remaining} day"
+            await bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"🎯 Quest almost done: {quest.title}\n"
+                    f"Only {remaining_txt} left for +{quest.reward_fun_minutes} fun minutes."
+                ),
+            )
+            db.mark_event_sent(user_id, event_key, now)
+            near_sent += 1
 
 
 async def run_midweek(db: Database, settings: Settings) -> None:

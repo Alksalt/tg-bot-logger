@@ -44,6 +44,9 @@ class StatusView:
     streak_multiplier: float
     deep_sessions_week: int
     active_quests: int
+    week_plan_done_minutes: int
+    week_plan_target_minutes: int
+    week_plan_remaining_minutes: int
     economy: EconomyBreakdown
 
 
@@ -106,7 +109,10 @@ def add_productive_entry(
 
     streak = db.refresh_streak(user_id, created_at)
     s_mult = streak_multiplier(streak.current_streak)
-    final_xp = math.floor(minutes * s_mult * deep_mult)
+    if normalized == "job":
+        final_xp = 0
+    else:
+        final_xp = math.floor(minutes * s_mult * deep_mult)
     if final_xp != entry.xp_earned:
         db.update_entry_xp(entry.id, final_xp)
         entry = Entry(
@@ -161,6 +167,10 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
 
     streak = db.get_streak(user_id, now)
     streak_mult = streak_multiplier(streak.current_streak)
+    plan = db.get_plan_target(user_id, week.start.date())
+    plan_target = int(plan.total_target_minutes) if plan else 0
+    plan_done = int(week_productive)
+    plan_remaining = max(plan_target - plan_done, 0)
 
     base_fun = db.sum_fun_earned_entries(user_id)
     level_bonus = db.sum_level_bonus(user_id)
@@ -197,5 +207,8 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         streak_multiplier=streak_mult,
         deep_sessions_week=db.count_deep_sessions(user_id, week.start, now),
         active_quests=len(db.list_active_quests(user_id, now)),
+        week_plan_done_minutes=plan_done,
+        week_plan_target_minutes=plan_target,
+        week_plan_remaining_minutes=plan_remaining,
         economy=economy,
     )

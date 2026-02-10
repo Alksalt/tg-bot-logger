@@ -46,6 +46,11 @@ def status_message(view: StatusView, username: str | None = None) -> str:
     lines.extend(
         [
             f"  📊 Total: {format_minutes_hm(view.week.productive_minutes)} | XP: +{view.xp_week}",
+            (
+                f"  🎯 Plan: {view.week_plan_done_minutes}m/{view.week_plan_target_minutes}m this week"
+                if view.week_plan_target_minutes > 0
+                else "  🎯 Plan: not set (/plan set <duration>)"
+            ),
             "",
             "💰 Fun Economy:",
             (
@@ -70,6 +75,12 @@ def week_message(view: StatusView) -> str:
         "📅 Week",
         f"Productive: {format_minutes_hm(view.week.productive_minutes)}",
         f"Spent: {format_minutes_hm(view.week.spent_minutes)}",
+        (
+            f"Plan: {view.week_plan_done_minutes}m/{view.week_plan_target_minutes}m "
+            f"(remaining {view.week_plan_remaining_minutes}m)"
+            if view.week_plan_target_minutes > 0
+            else "Plan: not set"
+        ),
         f"XP this week: {view.xp_week}",
         f"Deep work sessions (90m+): {view.deep_sessions_week}",
         *_fun_remaining_lines(view.economy.remaining_fun_minutes),

@@ -60,6 +60,11 @@ Core:
 - `/status`
 - `/week`
 - `/undo`
+- `/help [command]`
+- `/rules`
+- `/rules add <text>`
+- `/rules remove <id>`
+- `/rules clear`
 - `/llm <question>`
 - `/start [study|build|training|job] [note]`
 - `/stop`
@@ -75,19 +80,24 @@ Quests/shop/savings:
 - `/quests`
 - `/quests history`
 - `/shop`
-- `/shop add <emoji> "name" <cost_minutes> [nok_value]`
+- `/shop add <emoji> "name" <cost_minutes_or_duration> [nok_value]`
 - `/shop remove <id>`
 - `/shop budget <minutes|off>`
 - `/redeem <item_id|item_name>`
 - `/redeem history`
 - `/save`
-- `/save <target_duration> <name>`
-- `/save deposit <duration>`
+- `/save goal <target_duration> [name]`
+- `/save fund <duration>`
 - `/save auto <duration>`
-- `/save cancel <id>`
-- `/save complete <id>`
+
+Savings behavior:
+- Save fund is locked from normal fun usage.
+- Shop redemption spends from save fund first, then from remaining fun.
+- If a redemption is fully covered by save fund, remaining fun does not decrease.
 
 Duration formats: `90m`, `1.5h`, `1h20m`, `45`
+
+Streak rule: at least `120m` productive in a day is required to count as a streak day.
 
 ## Migrations
 
@@ -102,6 +112,7 @@ This v2 upgrade adds:
 - weekly wheel spins
 - savings goals
 - llm usage tracking
+- user rules notes
 
 ## Quest Generation
 

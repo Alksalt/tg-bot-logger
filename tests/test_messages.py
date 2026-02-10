@@ -32,6 +32,9 @@ def _view(productive_all: int, spent_all: int) -> StatusView:
         streak_multiplier=1.0,
         deep_sessions_week=0,
         active_quests=0,
+        week_plan_done_minutes=0,
+        week_plan_target_minutes=0,
+        week_plan_remaining_minutes=0,
         economy=economy,
     )
 

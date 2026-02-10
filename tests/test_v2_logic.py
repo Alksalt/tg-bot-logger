@@ -5,6 +5,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from tg_time_logger.db import Database
+from tg_time_logger.commands_shop import _parse_shop_add
 from tg_time_logger.quests import ensure_weekly_quests
 from tg_time_logger.service import add_productive_entry
 
@@ -29,17 +30,32 @@ def test_level_up_event_created_on_boundary(tmp_path) -> None:
 
 def test_streak_consecutive_days(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
-    add_productive_entry(db, 1, 60, "build", None, _dt(2026, 2, 9), "manual")
-    out2 = add_productive_entry(db, 1, 60, "build", None, _dt(2026, 2, 10), "manual")
+    add_productive_entry(db, 1, 120, "build", None, _dt(2026, 2, 9), "manual")
+    out2 = add_productive_entry(db, 1, 120, "build", None, _dt(2026, 2, 10), "manual")
     assert out2.streak.current_streak == 2
 
 
 def test_streak_freeze_preserves_gap(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
-    add_productive_entry(db, 1, 60, "build", None, _dt(2026, 2, 9), "manual")
+    add_productive_entry(db, 1, 120, "build", None, _dt(2026, 2, 9), "manual")
     db.create_freeze(1, date(2026, 2, 10), _dt(2026, 2, 9, 20))
-    out = add_productive_entry(db, 1, 60, "build", None, _dt(2026, 2, 11), "manual")
+    out = add_productive_entry(db, 1, 120, "build", None, _dt(2026, 2, 11), "manual")
     assert out.streak.current_streak == 2
+
+
+def test_streak_requires_two_hours_minimum(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    out1 = add_productive_entry(db, 1, 90, "build", None, _dt(2026, 2, 9), "manual")
+    out2 = add_productive_entry(db, 1, 90, "build", None, _dt(2026, 2, 10), "manual")
+    assert out1.streak.current_streak == 0
+    assert out2.streak.current_streak == 0
+
+
+def test_job_logs_grant_no_xp(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    out = add_productive_entry(db, 1, 180, "job", None, _dt(2026, 2, 9), "manual")
+    assert out.entry.xp_earned == 0
+    assert out.xp_earned == 0
 
 
 def test_deep_work_xp_multiplier_applies(tmp_path) -> None:
@@ -159,3 +175,23 @@ def test_llm_usage_tracking(tmp_path) -> None:
     usage2 = db.increment_llm_usage(user_id=1, day_key="2026-02-09", now=now)
     assert usage2.request_count == 1
     assert usage2.last_request_at is not None
+
+
+def test_withdraw_from_savings_reduces_locked_fund(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 2, 9)
+    db.upsert_active_savings_goal(1, "Fund", 2000, now)
+    db.deposit_to_savings(1, 500, now)
+    moved = db.withdraw_from_savings(1, 300, now)
+    goal = db.get_active_savings_goal(1)
+    assert moved == 300
+    assert goal is not None
+    assert goal.saved_fun_minutes == 200
+
+
+def test_shop_add_parser_accepts_smart_quotes_and_duration() -> None:
+    emoji, name, cost, nok = _parse_shop_add(["⌚️", "“Apple Watch”", "15000m"])
+    assert emoji == "⌚️"
+    assert name == "Apple Watch"
+    assert cost == 15000
+    assert nok is None

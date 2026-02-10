@@ -120,6 +120,14 @@ class LlmUsage:
     last_request_at: datetime | None
 
 
+@dataclass(frozen=True)
+class UserRule:
+    id: int
+    user_id: int
+    rule_text: str
+    created_at: datetime
+
+
 DEFAULT_SHOP_ITEMS: list[tuple[str, str, int, float]] = [
     ("☕", "Nice coffee / tea", 60, 80.0),
     ("🍔", "Burger meal", 200, 180.0),
@@ -130,6 +138,8 @@ DEFAULT_SHOP_ITEMS: list[tuple[str, str, int, float]] = [
     ("🍕", "Pizza night", 180, 160.0),
     ("🧁", "Cheat meal / dessert", 120, 100.0),
 ]
+
+STREAK_MINUTES_REQUIRED = 120
 
 
 class Database:
@@ -382,6 +392,17 @@ class Database:
                         PRIMARY KEY(user_id, day_key)
                     );
                 """,
+                12: """
+                    CREATE TABLE IF NOT EXISTS user_rules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        rule_text TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_user_rules_user_created
+                    ON user_rules(user_id, created_at DESC);
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -530,7 +551,8 @@ class Database:
 
         if kind == "productive":
             normalized_category = category if category in PRODUCTIVE_CATEGORIES else "build"
-            computed_xp = max(0, xp_earned if xp_earned is not None else minutes)
+            default_xp = 0 if normalized_category == "job" else minutes
+            computed_xp = max(0, xp_earned if xp_earned is not None else default_xp)
             computed_fun = max(0, fun_earned if fun_earned is not None else fun_from_minutes(normalized_category, minutes))
         else:
             normalized_category = "spend"
@@ -934,7 +956,7 @@ class Database:
     def refresh_streak(self, user_id: int, now: datetime) -> Streak:
         streak = self.get_streak(user_id, now)
         today = now.date()
-        if self.productive_minutes_for_date(user_id, today) < 60:
+        if self.productive_minutes_for_date(user_id, today) < STREAK_MINUTES_REQUIRED:
             return streak
 
         last_date = streak.last_productive_date
@@ -1216,6 +1238,58 @@ class Database:
         assert row is not None
         return _row_to_savings(row)
 
+    def get_active_savings_goal(self, user_id: int) -> SavingsGoal | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM savings_goals
+                WHERE user_id = ? AND status IN ('active', 'reached')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+        return _row_to_savings(row) if row else None
+
+    def upsert_active_savings_goal(self, user_id: int, name: str, target_fun_minutes: int, now: datetime) -> SavingsGoal:
+        target = max(1, target_fun_minutes)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM savings_goals
+                WHERE user_id = ? AND status IN ('active', 'reached')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (user_id,),
+            ).fetchone()
+            if row is None:
+                cur = conn.execute(
+                    """
+                    INSERT INTO savings_goals(user_id, name, target_fun_minutes, saved_fun_minutes, status, created_at)
+                    VALUES (?, ?, ?, 0, 'active', ?)
+                    """,
+                    (user_id, name, target, now.isoformat()),
+                )
+                created = conn.execute("SELECT * FROM savings_goals WHERE id = ?", (cur.lastrowid,)).fetchone()
+                assert created is not None
+                return _row_to_savings(created)
+
+            goal = _row_to_savings(row)
+            new_status = "reached" if goal.saved_fun_minutes >= target else "active"
+            completed_at = now.isoformat() if new_status == "reached" else None
+            conn.execute(
+                """
+                UPDATE savings_goals
+                SET name = ?, target_fun_minutes = ?, status = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (name, target, new_status, completed_at, goal.id),
+            )
+            updated = conn.execute("SELECT * FROM savings_goals WHERE id = ?", (goal.id,)).fetchone()
+        assert updated is not None
+        return _row_to_savings(updated)
+
     def list_savings_goals(self, user_id: int, active_only: bool = False) -> list[SavingsGoal]:
         with self._connect() as conn:
             if active_only:
@@ -1243,7 +1317,12 @@ class Database:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM savings_goals WHERE user_id = ? AND status = 'active' ORDER BY id ASC LIMIT 1",
+                """
+                SELECT * FROM savings_goals
+                WHERE user_id = ? AND status IN ('active', 'reached')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
                 (user_id,),
             ).fetchone()
             if row is None:
@@ -1264,6 +1343,46 @@ class Database:
         assert updated is not None
         return _row_to_savings(updated)
 
+    def withdraw_from_savings(self, user_id: int, amount: int, now: datetime) -> int:
+        if amount <= 0:
+            return 0
+        remaining = amount
+        withdrawn = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM savings_goals
+                WHERE user_id = ? AND status IN ('active', 'reached') AND saved_fun_minutes > 0
+                ORDER BY CASE status WHEN 'reached' THEN 0 ELSE 1 END, id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+            for row in rows:
+                if remaining <= 0:
+                    break
+                goal = _row_to_savings(row)
+                take = min(remaining, goal.saved_fun_minutes)
+                if take <= 0:
+                    continue
+                new_saved = goal.saved_fun_minutes - take
+                if new_saved >= goal.target_fun_minutes:
+                    new_status = "reached"
+                    completed_at = goal.completed_at.isoformat() if goal.completed_at else now.isoformat()
+                else:
+                    new_status = "active"
+                    completed_at = None
+                conn.execute(
+                    """
+                    UPDATE savings_goals
+                    SET saved_fun_minutes = ?, status = ?, completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (new_saved, new_status, completed_at, goal.id),
+                )
+                withdrawn += take
+                remaining -= take
+        return withdrawn
+
     def cancel_savings_goal(self, user_id: int, goal_id: int) -> bool:
         with self._connect() as conn:
             cur = conn.execute(
@@ -1279,6 +1398,41 @@ class Database:
                 (now.isoformat(), user_id, goal_id),
             )
         return cur.rowcount > 0
+
+    def add_user_rule(self, user_id: int, rule_text: str, created_at: datetime) -> UserRule:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO user_rules(user_id, rule_text, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, rule_text.strip(), created_at.isoformat()),
+            )
+            row = conn.execute("SELECT * FROM user_rules WHERE id = ?", (cur.lastrowid,)).fetchone()
+        assert row is not None
+        return _row_to_user_rule(row)
+
+    def list_user_rules(self, user_id: int) -> list[UserRule]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM user_rules
+                WHERE user_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [_row_to_user_rule(r) for r in rows]
+
+    def remove_user_rule(self, user_id: int, rule_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM user_rules WHERE user_id = ? AND id = ?", (user_id, rule_id))
+        return cur.rowcount > 0
+
+    def clear_user_rules(self, user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM user_rules WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount)
 
     def has_wheel_spin(self, user_id: int, week_start: date) -> bool:
         with self._connect() as conn:
@@ -1412,4 +1566,13 @@ def _row_to_llm_usage(row: sqlite3.Row) -> LlmUsage:
         day_key=row["day_key"],
         request_count=int(row["request_count"]),
         last_request_at=datetime.fromisoformat(row["last_request_at"]) if row["last_request_at"] else None,
+    )
+
+
+def _row_to_user_rule(row: sqlite3.Row) -> UserRule:
+    return UserRule(
+        id=int(row["id"]),
+        user_id=int(row["user_id"]),
+        rule_text=str(row["rule_text"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
     )

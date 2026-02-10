@@ -18,6 +18,52 @@ def _db(context: ContextTypes.DEFAULT_TYPE) -> Database:
     return db
 
 
+def _normalize_smart_quotes(value: str) -> str:
+    return (
+        value.replace("“", '"')
+        .replace("”", '"')
+        .replace("‘", "'")
+        .replace("’", "'")
+    )
+
+
+def _parse_shop_add(raw_args: list[str]) -> tuple[str, str, int, float | None]:
+    raw = _normalize_smart_quotes(" ".join(raw_args))
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        parts = raw.split()
+
+    if len(parts) < 3:
+        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration> [nok_value]")
+
+    emoji = parts[0]
+    nok: float | None = None
+    cost_idx = len(parts) - 1
+
+    # Optional NOK value at the end.
+    if len(parts) >= 4:
+        try:
+            candidate_nok = float(parts[-1])
+            _ = parse_duration_to_minutes(parts[-2])
+            nok = candidate_nok
+            cost_idx = len(parts) - 2
+        except (ValueError, DurationParseError):
+            nok = None
+            cost_idx = len(parts) - 1
+
+    try:
+        cost = parse_duration_to_minutes(parts[cost_idx])
+    except DurationParseError as exc:
+        raise ValueError(f"Invalid cost duration: {exc}") from exc
+
+    name = " ".join(parts[1:cost_idx]).strip()
+    if not name:
+        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration> [nok_value]")
+
+    return emoji, name, cost, nok
+
+
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
@@ -35,21 +81,11 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     action = context.args[0].lower()
     if action == "add":
-        raw = " ".join(context.args[1:])
         try:
-            parts = shlex.split(raw)
-        except ValueError:
-            parts = context.args[1:]
-        if len(parts) < 3:
-            await update.effective_message.reply_text("Usage: /shop add <emoji> \"name\" <cost_minutes> [nok_value]")
+            emoji, name, cost, nok = _parse_shop_add(context.args[1:])
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
             return
-        emoji = parts[0]
-        name = parts[1]
-        if not parts[2].isdigit():
-            await update.effective_message.reply_text("Cost must be an integer number of fun minutes")
-            return
-        cost = int(parts[2])
-        nok = float(parts[3]) if len(parts) > 3 else None
         item = db.add_shop_item(user_id, name, emoji, cost, nok, now)
         await update.effective_message.reply_text(f"Added shop item {item.id}: {item.emoji} {item.name} ({item.cost_fun_minutes}m)")
         return
@@ -101,7 +137,8 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     view = compute_status(db, user_id, now)
-    if view.economy.remaining_fun_minutes < item.cost_fun_minutes:
+    spendable_for_shop = view.economy.remaining_fun_minutes + view.economy.saved_fun_minutes
+    if spendable_for_shop < item.cost_fun_minutes:
         await update.effective_message.reply_text("Not enough fun minutes for this redemption")
         return
 
@@ -109,6 +146,10 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if budget_left is not None and budget_left < item.cost_fun_minutes:
         await update.effective_message.reply_text(f"Monthly budget exceeded. Remaining: {budget_left}m")
         return
+
+    from_fund = min(item.cost_fun_minutes, max(view.economy.saved_fun_minutes, 0))
+    moved = db.withdraw_from_savings(user_id, from_fund, now)
+    from_remaining = item.cost_fun_minutes - moved
 
     db.add_redemption(user_id, item.id, item.cost_fun_minutes, now)
     db.add_entry(
@@ -122,7 +163,10 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     await update.effective_message.reply_text(
-        f"{item.emoji} Redeemed: {item.name}! Enjoy your reward. -{item.cost_fun_minutes} fun min"
+        (
+            f"{item.emoji} Redeemed: {item.name}! -{item.cost_fun_minutes} fun min\n"
+            f"Used from fund: {moved}m | from remaining: {from_remaining}m"
+        )
     )
 
 
@@ -131,21 +175,38 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = _db(context)
 
     if not context.args:
-        goals = db.list_savings_goals(user_id)
-        if not goals:
-            await update.effective_message.reply_text("No savings goals. Use /save <target> \"name\"")
-            return
-        lines = ["🏦 Savings goals:"]
-        for g in goals:
-            pct = (g.saved_fun_minutes / g.target_fun_minutes * 100) if g.target_fun_minutes else 0
-            lines.append(
-                f"{g.id}. {g.name} [{g.status}] {g.saved_fun_minutes}/{g.target_fun_minutes} ({pct:.1f}%)"
+        goal = db.get_active_savings_goal(user_id)
+        if not goal:
+            await update.effective_message.reply_text(
+                "No save fund yet. Use /save goal <duration> [name]."
             )
-        await update.effective_message.reply_text("\n".join(lines))
+            return
+        pct = (goal.saved_fun_minutes / goal.target_fun_minutes * 100) if goal.target_fun_minutes else 0
+        await update.effective_message.reply_text(
+            (
+                "🏦 Save fund\n"
+                f"Goal: {goal.name}\n"
+                f"Progress: {goal.saved_fun_minutes}/{goal.target_fun_minutes}m ({pct:.1f}%)\n"
+                "Use /save fund <duration> to add minutes."
+            )
+        )
         return
 
     action = context.args[0].lower()
-    if action == "deposit" and len(context.args) >= 2:
+    if action == "goal" and len(context.args) >= 2:
+        try:
+            target = parse_duration_to_minutes(context.args[1])
+        except DurationParseError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return
+        name = " ".join(context.args[2:]).strip() or "Save fund"
+        goal = db.upsert_active_savings_goal(user_id, name, target, now)
+        await update.effective_message.reply_text(
+            f"Save goal set: {goal.name} ({goal.saved_fun_minutes}/{goal.target_fun_minutes}m)"
+        )
+        return
+
+    if action in {"fund", "deposit"} and len(context.args) >= 2:
         try:
             minutes = parse_duration_to_minutes(context.args[1])
         except DurationParseError as exc:
@@ -157,7 +218,7 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         goal = db.deposit_to_savings(user_id, minutes, now)
         if not goal:
-            await update.effective_message.reply_text("No active savings goal")
+            await update.effective_message.reply_text("No save goal. Use /save goal <duration> first.")
             return
         await update.effective_message.reply_text(
             f"Deposited {minutes}m into '{goal.name}' ({goal.saved_fun_minutes}/{goal.target_fun_minutes})"
@@ -179,21 +240,9 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("Savings goal cancelled" if ok else "Goal not found")
         return
 
-    if action == "complete" and len(context.args) >= 2 and context.args[1].isdigit():
-        ok = db.complete_savings_goal(user_id, int(context.args[1]), now)
-        await update.effective_message.reply_text("Savings goal marked complete" if ok else "Goal not found")
-        return
-
-    try:
-        target = parse_duration_to_minutes(context.args[0])
-    except DurationParseError:
-        await update.effective_message.reply_text(
-            "Usage: /save <target_minutes|duration> <name> or /save deposit <duration>"
-        )
-        return
-    name = " ".join(context.args[1:]).strip() or "Savings goal"
-    goal = db.create_savings_goal(user_id, name, target, now)
-    await update.effective_message.reply_text(f"Created savings goal {goal.id}: {goal.name} ({goal.target_fun_minutes}m)")
+    await update.effective_message.reply_text(
+        "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>"
+    )
 
 
 def register_shop_handlers(app: Application) -> None:
