@@ -780,7 +780,7 @@ class Database:
         started_at: datetime,
         note: str | None,
     ) -> tuple[TimerSession | None, TimerSession]:
-        if category not in PRODUCTIVE_CATEGORIES:
+        if category not in PRODUCTIVE_CATEGORIES and category != "spend":
             category = "build"
 
         with self._connect() as conn:

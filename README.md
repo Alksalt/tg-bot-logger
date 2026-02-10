@@ -66,7 +66,7 @@ Core:
 - `/rules remove <id>`
 - `/rules clear`
 - `/llm <question>`
-- `/start [study|build|training|job] [note]`
+- `/start [study|build|training|job|spend] [note]`
 - `/stop`
 
 Plan/reminders:

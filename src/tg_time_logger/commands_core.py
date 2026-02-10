@@ -77,14 +77,16 @@ HELP_TOPICS: dict[str, str] = {
         "- /plan show"
     ),
     "start": (
-        "/start [study|build|training|job] [note]\n"
+        "/start [study|build|training|job|spend] [note]\n"
         "Starts a timer session.\n\n"
         "Example:\n"
-        "- /start build backend cleanup"
+        "- /start build backend cleanup\n"
+        "- /start spend games"
     ),
     "stop": (
         "/stop\n"
-        "Stops active timer and logs elapsed minutes with XP/fun."
+        "Stops active timer and logs elapsed minutes.\n"
+        "Productive timers give XP/fun; spend timers log fun spend."
     ),
     "quests": (
         "/quests\n"
@@ -394,7 +396,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     category = "build"
     tail = context.args
-    if tail and tail[0].lower() in PRODUCTIVE_CATEGORIES:
+    if tail and (tail[0].lower() in PRODUCTIVE_CATEGORIES or tail[0].lower() == "spend"):
         category = tail[0].lower()
         tail = tail[1:]
     note = " ".join(tail).strip() or None
@@ -407,7 +409,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.effective_message.reply_text(
-        f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}"
+        (
+            f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}"
+            if created.category != "spend"
+            else f"Spend timer started at {created.started_at.strftime('%H:%M')}"
+        )
     )
 
 
@@ -423,6 +429,27 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     minutes = int(elapsed.total_seconds() // 60)
     if minutes <= 0:
         minutes = 1
+
+    if session.category == "spend":
+        db.add_entry(
+            user_id=user_id,
+            kind="spend",
+            category="spend",
+            minutes=minutes,
+            note=session.note,
+            created_at=now,
+            source="timer",
+        )
+        view = compute_status(db, user_id, now)
+        await update.effective_message.reply_text(
+            (
+                f"⏱️ Spend session complete: {minutes}m\n\n"
+                f"📝 Logged fun spend: {minutes} min\n\n"
+                f"{status_message(view, username=update.effective_user.username)}"
+            ),
+            reply_markup=build_keyboard(),
+        )
+        return
 
     outcome = add_productive_entry(
         db=db,
