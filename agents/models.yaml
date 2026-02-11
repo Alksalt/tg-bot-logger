@@ -3,16 +3,16 @@ tiers:
   free:
     description: "Free-first models for day-to-day usage."
     models:
-      - id: "openrouter/free"
+      - id: "arcee-ai/trinity-large-preview:free"
         provider: "openrouter"
         reasoning: true
       - id: "stepfun/step-3.5-flash:free"
         provider: "openrouter"
         reasoning: true
-      - id: "arcee-ai/trinity-large-preview:free"
+      - id: "tngtech/deepseek-r1t2-chimera:free"
         provider: "openrouter"
         reasoning: true
-      - id: "tngtech/deepseek-r1t2-chimera:free"
+      - id: "qwen/qwen3-coder:free"
         provider: "openrouter"
         reasoning: true
   open_source_cheap:

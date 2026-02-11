@@ -35,7 +35,9 @@ def load_model_config(path: Path) -> ModelConfig:
         fallback = TierSpec(
             name="free",
             description="Fallback free tier",
-            models=(ModelSpec(id="openrouter/free", provider="openrouter", reasoning=True),),
+            models=(
+                ModelSpec(id="arcee-ai/trinity-large-preview:free", provider="openrouter", reasoning=True),
+            ),
         )
         return ModelConfig(default_tier="free", tiers={"free": fallback})
 
@@ -75,7 +77,9 @@ def load_model_config(path: Path) -> ModelConfig:
         fallback = TierSpec(
             name="free",
             description="Fallback free tier",
-            models=(ModelSpec(id="openrouter/free", provider="openrouter", reasoning=True),),
+            models=(
+                ModelSpec(id="arcee-ai/trinity-large-preview:free", provider="openrouter", reasoning=True),
+            ),
         )
         tiers = {"free": fallback}
         default_tier = "free"
