@@ -6,8 +6,9 @@ from typing import Any
 
 from tg_time_logger.agents.execution.config import load_model_config
 from tg_time_logger.agents.execution.loop import AgentLoop, AgentRequest
+from tg_time_logger.agents.orchestration.intent_router import resolve_intent_tags
 from tg_time_logger.agents.tools.base import ToolContext
-from tg_time_logger.agents.tools.registry import build_default_registry
+from tg_time_logger.agents.tools.registry import ToolRegistry, build_default_registry
 from tg_time_logger.config import Settings
 from tg_time_logger.db import Database
 from tg_time_logger.service import compute_status
@@ -56,7 +57,16 @@ def run_llm_agent(
     requested_tier = tier_override or str(cfg.get("agent.default_tier", model_cfg.default_tier))
     directive = _load_directive(settings.agent_directive_path)
     context_text = build_agent_context_text(db, user_id, now)
-    registry = build_default_registry()
+
+    # Two-phase tool resolution: only load tools relevant to the question
+    full_registry = build_default_registry()
+    matched_tags = resolve_intent_tags(question)
+    if matched_tags:
+        registry = full_registry.filter_by_tags(matched_tags)
+    else:
+        registry = ToolRegistry()  # empty — agent answers from context only
+    loaded_specs = registry.list_specs()
+    loaded_tool_names = [spec["name"] for spec in loaded_specs]
 
     loop = AgentLoop(
         model_config=model_cfg,
@@ -92,6 +102,10 @@ def run_llm_agent(
             "tier": requested_tier,
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
+            "matched_tags": sorted(matched_tags),
+            "loaded_tools_count": len(loaded_tool_names),
+            "loaded_tools": loaded_tool_names,
+            "question_length": len(question),
             "steps": len(result.steps),
             "tool_steps": tool_steps,
             "schema_errors": schema_errors,
@@ -108,6 +122,9 @@ def run_llm_agent(
         "status": result.status,
         "prompt_tokens": result.prompt_tokens,
         "completion_tokens": result.completion_tokens,
+        "matched_tags": sorted(matched_tags),
+        "loaded_tools_count": len(loaded_tool_names),
+        "loaded_tools": loaded_tool_names,
     }
 
 

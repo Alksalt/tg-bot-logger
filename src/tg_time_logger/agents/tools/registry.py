@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tg_time_logger.agents.tools.base import Tool, ToolContext, ToolResult
+from tg_time_logger.agents.tools.db_query import DbQueryTool
+from tg_time_logger.agents.tools.insights import InsightsTool
 from tg_time_logger.agents.tools.notion_mcp import NotionMcpTool
 from tg_time_logger.agents.tools.search import WebSearchTool
 
@@ -12,6 +14,8 @@ from tg_time_logger.agents.tools.search import WebSearchTool
 class StubTool:
     name: str
     description: str
+    tags: tuple[str, ...] = ()
+    is_stub: bool = True
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         return ToolResult(
@@ -31,8 +35,28 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
-    def list_specs(self) -> list[dict[str, str]]:
-        return [{"name": t.name, "description": t.description} for t in self._tools.values()]
+    def list_specs(self, *, include_stubs: bool = False, tags: set[str] | None = None) -> list[dict[str, str]]:
+        specs: list[dict[str, str]] = []
+        for t in self._tools.values():
+            if not include_stubs and getattr(t, "is_stub", False):
+                continue
+            if tags is not None:
+                tool_tags = set(getattr(t, "tags", ()))
+                if not tool_tags.intersection(tags):
+                    continue
+            specs.append({"name": t.name, "description": t.description})
+        return specs
+
+    def filter_by_tags(self, tags: set[str]) -> ToolRegistry:
+        """Return a new registry containing only non-stub tools matching any of the given tags."""
+        filtered = ToolRegistry()
+        for t in self._tools.values():
+            if getattr(t, "is_stub", False):
+                continue
+            tool_tags = set(getattr(t, "tags", ()))
+            if tool_tags.intersection(tags):
+                filtered.register(t)
+        return filtered
 
     def run(self, name: str, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         tool = self.get(name)
@@ -44,8 +68,10 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(WebSearchTool())
+    reg.register(DbQueryTool())
+    reg.register(InsightsTool())
     reg.register(NotionMcpTool())
-    reg.register(StubTool(name="mail_api", description="Future mail integration tool."))
-    reg.register(StubTool(name="maps_api", description="Future maps/geocoding integration tool."))
-    reg.register(StubTool(name="custom_http_api", description="Future generic app API connector tool."))
+    reg.register(StubTool(name="mail_api", description="Future mail integration tool.", tags=("communication", "mail")))
+    reg.register(StubTool(name="maps_api", description="Future maps/geocoding integration tool.", tags=("maps", "location")))
+    reg.register(StubTool(name="custom_http_api", description="Future generic app API connector tool.", tags=("http", "api")))
     return reg

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from tg_time_logger.agents.execution.config import ModelConfig, ModelSpec, TierSpec, get_tier_order, load_model_config
 from tg_time_logger.agents.execution.loop import AgentLoop, AgentRequest
 from tg_time_logger.agents.execution.llm_client import parse_json_object
+from tg_time_logger.agents.orchestration.runner import run_llm_agent
 from tg_time_logger.agents.tools.base import ToolContext
 from tg_time_logger.agents.tools.registry import build_default_registry
 from tg_time_logger.config import Settings
@@ -113,7 +114,66 @@ def test_loop_budget_blocked_on_small_step_budget(tmp_path) -> None:
         notion_api_key=None,
         notion_database_id=None,
         notion_backup_dir=tmp_path / "notion_backups",
+        notion_backend="api",
+        notion_mcp_url=None,
+        notion_mcp_auth_token=None,
+        notion_mcp_tool_name="notion-create-pages",
     )
     tool_ctx = ToolContext(user_id=1, now=now, db=db, settings=settings, config={})
     result = loop.run(req, tool_ctx)
     assert result.status == "budget_blocked"
+
+
+def test_run_llm_agent_audit_includes_intent_telemetry(tmp_path, monkeypatch) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 2, 11)
+    captured: dict[str, object] = {}
+
+    def _capture_audit(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(db, "add_admin_audit", _capture_audit)
+
+    settings = Settings(
+        telegram_bot_token="x",
+        database_path=tmp_path / "app.db",
+        tz="Europe/Oslo",
+        llm_enabled=True,
+        llm_provider="openai",
+        llm_model="gpt-5-mini",
+        llm_api_key=None,
+        llm_router_config_path=Path("llm_router.yaml"),
+        admin_panel_token=None,
+        admin_host="127.0.0.1",
+        admin_port=8080,
+        openrouter_api_key=None,
+        brave_search_api_key=None,
+        tavily_api_key=None,
+        serper_api_key=None,
+        agent_models_path=Path("agents/models.yaml"),
+        agent_directive_path=Path("agents/directives/llm_assistant.md"),
+        notion_api_key=None,
+        notion_database_id=None,
+        notion_backup_dir=tmp_path / "notion_backups",
+        notion_backend="api",
+        notion_mcp_url=None,
+        notion_mcp_auth_token=None,
+        notion_mcp_tool_name="notion-create-pages",
+    )
+    res = run_llm_agent(
+        db=db,
+        settings=settings,
+        user_id=123,
+        now=now,
+        question="search for productivity tips",
+    )
+    payload = captured.get("payload")
+    assert isinstance(payload, dict)
+    assert "prompt_tokens" in payload
+    assert "matched_tags" in payload
+    assert "loaded_tools_count" in payload
+    assert "loaded_tools" in payload
+    assert payload["loaded_tools_count"] >= 1
+    assert "web_search" in payload["loaded_tools"]
+    assert "search" in payload["matched_tags"]
+    assert res["loaded_tools_count"] >= 1

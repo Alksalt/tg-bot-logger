@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -134,7 +135,7 @@ def _post_with_retry(
     return client.post(url, headers=headers, json=payload)
 
 
-def push_to_notion_scaffold(payload: dict[str, Any], settings: Settings) -> tuple[str, str]:
+def _push_to_notion_api(payload: dict[str, Any], settings: Settings) -> tuple[str, str]:
     if not settings.notion_api_key or not settings.notion_database_id:
         return "skipped", "NOTION_API_KEY or NOTION_DATABASE_ID is not configured."
     user_id = int(payload.get("user_id") or 0)
@@ -198,6 +199,73 @@ def push_to_notion_scaffold(payload: dict[str, Any], settings: Settings) -> tupl
             return "synced", f"Created page {page_id}"
     except Exception as exc:
         return "failed", f"Notion sync exception: {exc}"
+
+
+def _build_mcp_backup_args(payload: dict[str, Any], database_id: str) -> dict[str, Any]:
+    user_id = int(payload.get("user_id") or 0)
+    ts = str(payload.get("generated_at") or "")[:19]
+    title = f"TG Backup u{user_id} {ts}"
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    # Split long backup into sections to keep MCP payload moderate.
+    snippet = body[:20000]
+    return {
+        "parent": {"database_id": database_id},
+        "pages": [
+            {
+                "properties": {"Name": title},
+                "content": f"## Backup payload\n```json\n{snippet}\n```",
+            }
+        ],
+    }
+
+
+def _push_to_notion_mcp(payload: dict[str, Any], settings: Settings) -> tuple[str, str]:
+    if not settings.notion_mcp_url:
+        return "skipped", "NOTION_MCP_URL is not configured."
+    if not settings.notion_database_id:
+        return "skipped", "NOTION_DATABASE_ID is not configured."
+
+    headers = {"Content-Type": "application/json"}
+    if settings.notion_mcp_auth_token:
+        headers["Authorization"] = f"Bearer {settings.notion_mcp_auth_token}"
+    body = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "tools/call",
+        "params": {
+            "name": settings.notion_mcp_tool_name,
+            "arguments": _build_mcp_backup_args(payload, settings.notion_database_id),
+        },
+    }
+    try:
+        with httpx.Client(timeout=30) as client:
+            resp = client.post(settings.notion_mcp_url, headers=headers, json=body)
+        if resp.status_code >= 400:
+            return "failed", f"Notion MCP HTTP error {resp.status_code}: {resp.text[:300]}"
+        data = resp.json()
+        if isinstance(data, dict) and data.get("error"):
+            return "failed", f"Notion MCP error: {json.dumps(data.get('error'))[:300]}"
+        result = data.get("result") if isinstance(data, dict) else None
+        return "synced", f"MCP call succeeded: {str(result)[:220]}"
+    except Exception as exc:
+        return "failed", f"Notion MCP exception: {exc}"
+
+
+def push_to_notion_scaffold(payload: dict[str, Any], settings: Settings) -> tuple[str, str]:
+    backend = (settings.notion_backend or "api").strip().lower()
+    if backend == "api":
+        return _push_to_notion_api(payload, settings)
+    if backend == "mcp":
+        return _push_to_notion_mcp(payload, settings)
+    if backend == "auto":
+        status, message = _push_to_notion_mcp(payload, settings)
+        if status == "synced":
+            return status, message
+        status2, message2 = _push_to_notion_api(payload, settings)
+        if status2 == "synced":
+            return status2, message2
+        return "failed", f"auto mode failed; mcp={message}; api={message2}"
+    return "failed", f"Unknown NOTION_BACKEND '{backend}'. Use api|mcp|auto."
 
 
 def run_notion_backup_job(db: Database, settings: Settings, now: datetime) -> list[NotionBackupRecord]:

@@ -27,6 +27,7 @@ class ToolResult:
 class Tool(Protocol):
     name: str
     description: str
+    tags: tuple[str, ...]
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         ...

@@ -29,6 +29,10 @@ class Settings:
     notion_api_key: str | None
     notion_database_id: str | None
     notion_backup_dir: Path
+    notion_backend: str
+    notion_mcp_url: str | None
+    notion_mcp_auth_token: str | None
+    notion_mcp_tool_name: str
 
 
 def _load_env_file(path: Path) -> None:
@@ -96,4 +100,8 @@ def load_settings() -> Settings:
         notion_api_key=os.getenv("NOTION_API_KEY"),
         notion_database_id=os.getenv("NOTION_DATABASE_ID"),
         notion_backup_dir=Path(os.getenv("NOTION_BACKUP_DIR", "./data/notion_backups")),
+        notion_backend=(os.getenv("NOTION_BACKEND", "api") or "api").strip().lower(),
+        notion_mcp_url=os.getenv("NOTION_MCP_URL"),
+        notion_mcp_auth_token=os.getenv("NOTION_MCP_AUTH_TOKEN"),
+        notion_mcp_tool_name=(os.getenv("NOTION_MCP_TOOL_NAME", "notion-create-pages") or "notion-create-pages").strip(),
     )

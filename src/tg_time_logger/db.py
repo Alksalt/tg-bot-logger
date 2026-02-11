@@ -2,195 +2,50 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES, fun_from_minutes, level_from_xp, level_up_bonus_minutes
 
+from tg_time_logger.db_models import (
+    Entry,
+    LevelUpEvent,
+    LlmUsage,
+    PlanTarget,
+    Quest,
+    SavingsGoal,
+    ShopItem,
+    Streak,
+    TimerSession,
+    UserRule,
+    UserSettings,
+)
+from tg_time_logger.db_constants import (
+    APP_CONFIG_DEFAULTS,
+    DEFAULT_SHOP_ITEMS,
+    JOB_CONFIG_KEYS,
+    STREAK_MINUTES_REQUIRED,
+)
+from tg_time_logger.db_converters import (
+    _row_to_entry,
+    _row_to_level,
+    _row_to_llm_usage,
+    _row_to_plan,
+    _row_to_quest,
+    _row_to_savings,
+    _row_to_shop_item,
+    _row_to_streak,
+    _row_to_timer,
+    _row_to_user_rule,
+)
 
-@dataclass(frozen=True)
-class Entry:
-    id: int
-    user_id: int
-    kind: str
-    category: str
-    minutes: int
-    xp_earned: int
-    fun_earned: int
-    deep_work_multiplier: float
-    note: str | None
-    created_at: datetime
-    deleted_at: datetime | None
-    source: str
-
-
-@dataclass(frozen=True)
-class TimerSession:
-    user_id: int
-    category: str
-    note: str | None
-    started_at: datetime
-
-
-@dataclass(frozen=True)
-class UserSettings:
-    user_id: int
-    reminders_enabled: bool
-    daily_goal_minutes: int
-    quiet_hours: str | None
-    shop_budget_minutes: int | None
-    auto_save_minutes: int
-    sunday_fund_percent: int
-    language_code: str
-
-
-@dataclass(frozen=True)
-class PlanTarget:
-    user_id: int
-    week_start_date: date
-    total_target_minutes: int
-    study_target_minutes: int
-    build_target_minutes: int
-    training_target_minutes: int
-    job_target_minutes: int
-
-
-@dataclass(frozen=True)
-class LevelUpEvent:
-    id: int
-    user_id: int
-    level: int
-    bonus_fun_minutes: int
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class Streak:
-    user_id: int
-    current_streak: int
-    longest_streak: int
-    last_productive_date: date | None
-    updated_at: datetime
-
-
-@dataclass(frozen=True)
-class Quest:
-    id: int
-    user_id: int
-    title: str
-    description: str
-    quest_type: str
-    difficulty: str
-    reward_fun_minutes: int
-    condition_json: str
-    status: str
-    expires_at: datetime
-    completed_at: datetime | None
-    created_at: datetime
-
-
-@dataclass(frozen=True)
-class ShopItem:
-    id: int
-    user_id: int
-    name: str
-    emoji: str
-    cost_fun_minutes: int
-    nok_value: float | None
-    active: bool
-
-
-@dataclass(frozen=True)
-class SavingsGoal:
-    id: int
-    user_id: int
-    name: str
-    target_fun_minutes: int
-    saved_fun_minutes: int
-    status: str
-    created_at: datetime
-    completed_at: datetime | None
-
-
-@dataclass(frozen=True)
-class LlmUsage:
-    user_id: int
-    day_key: str
-    request_count: int
-    last_request_at: datetime | None
-
-
-@dataclass(frozen=True)
-class UserRule:
-    id: int
-    user_id: int
-    rule_text: str
-    created_at: datetime
-
-
-DEFAULT_SHOP_ITEMS: list[tuple[str, str, int, float]] = [
-    ("☕", "Nice coffee / tea", 60, 80.0),
-    ("🍔", "Burger meal", 200, 180.0),
-    ("🍣", "Sushi dinner", 400, 350.0),
-    ("🎬", "Movie / streaming night", 150, 130.0),
-    ("🎮", "New game (Steam/PS)", 800, 500.0),
-    ("📱", "Device fund +500 NOK", 2000, 500.0),
-    ("🍕", "Pizza night", 180, 160.0),
-    ("🧁", "Cheat meal / dessert", 120, 100.0),
+__all__ = [
+    "Database",
+    "Entry", "TimerSession", "UserSettings", "PlanTarget", "LevelUpEvent",
+    "Streak", "Quest", "ShopItem", "SavingsGoal", "LlmUsage", "UserRule",
+    "DEFAULT_SHOP_ITEMS", "STREAK_MINUTES_REQUIRED", "APP_CONFIG_DEFAULTS", "JOB_CONFIG_KEYS",
 ]
-
-STREAK_MINUTES_REQUIRED = 120
-
-APP_CONFIG_DEFAULTS: dict[str, Any] = {
-    "feature.llm_enabled": True,
-    "feature.quests_enabled": True,
-    "feature.reminders_enabled": True,
-    "feature.shop_enabled": True,
-    "feature.savings_enabled": True,
-    "feature.economy_enabled": True,
-    "feature.agent_enabled": True,
-    "feature.search_enabled": True,
-    "feature.notion_backup_enabled": True,
-    "job.sunday_summary_enabled": True,
-    "job.reminders_enabled": True,
-    "job.midweek_enabled": True,
-    "job.check_quests_enabled": True,
-    "job.notion_backup_enabled": True,
-    "economy.fun_rate.study": 15,
-    "economy.fun_rate.build": 20,
-    "economy.fun_rate.training": 20,
-    "economy.fun_rate.job": 4,
-    "economy.nok_to_fun_minutes": 3,
-    "economy.milestone_block_minutes": 600,
-    "economy.milestone_bonus_minutes": 180,
-    "economy.xp_level2_base": 300,
-    "economy.xp_linear": 80,
-    "economy.xp_quadratic": 4,
-    "economy.level_bonus_scale_percent": 100,
-    "agent.max_steps": 6,
-    "agent.max_tool_calls": 4,
-    "agent.max_step_input_tokens": 1800,
-    "agent.max_step_output_tokens": 420,
-    "agent.max_total_tokens": 6000,
-    "agent.reasoning_enabled": True,
-    "agent.default_tier": "free",
-    "search.cache_ttl_seconds": 21600,
-    "search.provider_order": "brave,tavily,serper",
-    "search.brave_enabled": True,
-    "search.tavily_enabled": True,
-    "search.serper_enabled": True,
-    "i18n.default_language": "en",
-}
-
-JOB_CONFIG_KEYS = {
-    "sunday_summary": "job.sunday_summary_enabled",
-    "reminders": "job.reminders_enabled",
-    "midweek": "job.midweek_enabled",
-    "check_quests": "job.check_quests_enabled",
-    "notion_backup": "job.notion_backup_enabled",
-}
 
 
 class Database:
@@ -1918,127 +1773,3 @@ class Database:
                 (user_id, week_start.isoformat(), result_fun_minutes, spun_at.isoformat()),
             )
         return cur.rowcount > 0
-
-
-def _row_to_entry(row: sqlite3.Row) -> Entry:
-    kind = row["kind"] if "kind" in row.keys() and row["kind"] else row["entry_type"]
-    category = row["category"] or ("spend" if kind == "spend" else "build")
-    xp_earned = int(row["xp_earned"] if "xp_earned" in row.keys() and row["xp_earned"] is not None else (row["minutes"] if kind == "productive" else 0))
-    fun_earned = int(row["fun_earned"] if "fun_earned" in row.keys() and row["fun_earned"] is not None else 0)
-    deep_mult = float(row["deep_work_multiplier"] if "deep_work_multiplier" in row.keys() and row["deep_work_multiplier"] is not None else 1.0)
-
-    return Entry(
-        id=row["id"],
-        user_id=row["user_id"],
-        kind=kind,
-        category=category,
-        minutes=row["minutes"],
-        xp_earned=xp_earned,
-        fun_earned=fun_earned,
-        deep_work_multiplier=deep_mult,
-        note=row["note"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-        deleted_at=datetime.fromisoformat(row["deleted_at"]) if row["deleted_at"] else None,
-        source=row["source"],
-    )
-
-
-def _row_to_timer(row: sqlite3.Row) -> TimerSession:
-    return TimerSession(
-        user_id=row["user_id"],
-        category=row["category"] or "build",
-        note=row["note"],
-        started_at=datetime.fromisoformat(row["started_at"]),
-    )
-
-
-def _row_to_plan(row: sqlite3.Row) -> PlanTarget:
-    return PlanTarget(
-        user_id=row["user_id"],
-        week_start_date=date.fromisoformat(row["week_start_date"]),
-        total_target_minutes=row["total_target_minutes"],
-        study_target_minutes=row["study_target_minutes"],
-        build_target_minutes=row["build_target_minutes"],
-        training_target_minutes=row["training_target_minutes"],
-        job_target_minutes=row["job_target_minutes"],
-    )
-
-
-def _row_to_level(row: sqlite3.Row) -> LevelUpEvent:
-    return LevelUpEvent(
-        id=row["id"],
-        user_id=row["user_id"],
-        level=row["level"],
-        bonus_fun_minutes=row["bonus_fun_minutes"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _row_to_streak(row: sqlite3.Row) -> Streak:
-    return Streak(
-        user_id=row["user_id"],
-        current_streak=int(row["current_streak"]),
-        longest_streak=int(row["longest_streak"]),
-        last_productive_date=date.fromisoformat(row["last_productive_date"]) if row["last_productive_date"] else None,
-        updated_at=datetime.fromisoformat(row["updated_at"]),
-    )
-
-
-def _row_to_quest(row: sqlite3.Row) -> Quest:
-    return Quest(
-        id=row["id"],
-        user_id=row["user_id"],
-        title=row["title"],
-        description=row["description"],
-        quest_type=row["quest_type"],
-        difficulty=row["difficulty"],
-        reward_fun_minutes=row["reward_fun_minutes"],
-        condition_json=row["condition_json"],
-        status=row["status"],
-        expires_at=datetime.fromisoformat(row["expires_at"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _row_to_shop_item(row: sqlite3.Row) -> ShopItem:
-    return ShopItem(
-        id=row["id"],
-        user_id=row["user_id"],
-        name=row["name"],
-        emoji=row["emoji"] or "🎁",
-        cost_fun_minutes=row["cost_fun_minutes"],
-        nok_value=row["nok_value"],
-        active=bool(row["active"]),
-    )
-
-
-def _row_to_savings(row: sqlite3.Row) -> SavingsGoal:
-    return SavingsGoal(
-        id=row["id"],
-        user_id=row["user_id"],
-        name=row["name"],
-        target_fun_minutes=row["target_fun_minutes"],
-        saved_fun_minutes=row["saved_fun_minutes"],
-        status=row["status"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-    )
-
-
-def _row_to_llm_usage(row: sqlite3.Row) -> LlmUsage:
-    return LlmUsage(
-        user_id=row["user_id"],
-        day_key=row["day_key"],
-        request_count=int(row["request_count"]),
-        last_request_at=datetime.fromisoformat(row["last_request_at"]) if row["last_request_at"] else None,
-    )
-
-
-def _row_to_user_rule(row: sqlite3.Row) -> UserRule:
-    return UserRule(
-        id=int(row["id"]),
-        user_id=int(row["user_id"]),
-        rule_text=str(row["rule_text"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )

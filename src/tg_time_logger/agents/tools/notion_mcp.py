@@ -9,9 +9,10 @@ from tg_time_logger.notion_backup import build_backup_payload, push_to_notion_sc
 class NotionMcpTool(Tool):
     name = "notion_mcp"
     description = (
-        "Scaffolded Notion backup helper. "
+        "Notion backup helper with backend switch (api|mcp|auto). "
         "Args: {\"mode\": \"backup_now\", \"user_id\": int(optional)}"
     )
+    tags = ("storage", "notion", "backup")
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         mode = str(args.get("mode", "backup_now")).strip().lower()
@@ -42,4 +43,3 @@ class NotionMcpTool(Tool):
                 "entry_count": len(payload.get("entries", [])),
             },
         )
-

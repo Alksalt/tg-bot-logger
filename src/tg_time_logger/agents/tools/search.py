@@ -92,6 +92,7 @@ class WebSearchTool(Tool):
         "Search the web for current information. "
         "Args: {\"query\": str, \"max_results\": int (optional)}"
     )
+    tags = ("search", "web")
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         query_raw = str(args.get("query", "")).strip()

@@ -36,6 +36,10 @@ SERPER_API_KEY=<key>
 NOTION_API_KEY=<key>
 NOTION_DATABASE_ID=<database_id>
 NOTION_BACKUP_DIR=./data/notion_backups
+NOTION_BACKEND=api
+NOTION_MCP_URL=
+NOTION_MCP_AUTH_TOKEN=
+NOTION_MCP_TOOL_NAME=notion-create-pages
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-5-mini
 LLM_ROUTER_CONFIG=./llm_router.yaml
@@ -136,7 +140,11 @@ Price conversion:
 
 Notion backup:
 - `uv run python jobs.py notion_backup` writes per-user JSON snapshots to `NOTION_BACKUP_DIR`.
-- If `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set, it also writes a page to Notion.
+- Backend switch:
+  - `NOTION_BACKEND=api` uses Notion REST API (`NOTION_API_KEY` + `NOTION_DATABASE_ID`)
+  - `NOTION_BACKEND=mcp` uses JSON-RPC MCP endpoint (`NOTION_MCP_URL`, optional `NOTION_MCP_AUTH_TOKEN`)
+  - `NOTION_BACKEND=auto` tries MCP first, then REST API fallback
+- MCP tool name defaults to `notion-create-pages` (override with `NOTION_MCP_TOOL_NAME`).
 - The Notion database must have at least one **Title** property.
 
 Cron example (daily backup):
