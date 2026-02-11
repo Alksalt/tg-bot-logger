@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from tg_time_logger.agents.orchestration.runner import run_llm_agent, run_search_tool
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -17,7 +18,7 @@ from tg_time_logger.commands_shared import (
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES
 from tg_time_logger.llm_parser import parse_free_form_with_llm
-from tg_time_logger.llm_router import LlmRoute, call_text
+from tg_time_logger.llm_router import LlmRoute
 from tg_time_logger.messages import entry_removed_message, status_message, week_message
 from tg_time_logger.service import add_productive_entry, compute_status, normalize_category
 from tg_time_logger.time_utils import week_range_for, week_start_date
@@ -33,7 +34,7 @@ HELP_TOPICS: dict[str, str] = {
         "/log, /spend, /status, /week, /undo\n"
         "/plan, /start, /stop\n"
         "/quests, /shop, /redeem, /save\n"
-        "/rules, /llm, /reminders, /quiet_hours, /freeze\n"
+        "/rules, /llm, /search, /reminders, /quiet_hours, /freeze\n"
         "/help [command]\n\n"
         "Examples:\n"
         "/help log\n"
@@ -128,10 +129,19 @@ HELP_TOPICS: dict[str, str] = {
     ),
     "llm": (
         "/llm <question>\n"
+        "/llm tier <free|open_source_cheap|top_tier> <question>\n"
         "Ask analytics questions based on your stats.\n"
-        "Requires LLM_ENABLED=1 and valid API key.\n\n"
+        "Uses V3 agent loop with tools and tiered model routing.\n"
+        "Requires OPENROUTER_API_KEY.\n\n"
         "Example:\n"
-        "- /llm what should I focus on to hit level 10 faster?"
+        "- /llm what should I focus on to hit level 10 faster?\n"
+        "- /llm tier free compare apple watch prices in norway"
+    ),
+    "search": (
+        "/search <query>\n"
+        "Runs web search tool (Brave -> Tavily -> Serper fallback) with cache + dedupe.\n\n"
+        "Example:\n"
+        "- /search apple watch ultra 2 price norway"
     ),
     "reminders": (
         "/reminders on\n"
@@ -525,12 +535,20 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not db.is_feature_enabled("llm"):
         await update.effective_message.reply_text("LLM features are currently disabled by admin.")
         return
-
-    if not settings.llm_enabled or not settings.llm_api_key:
-        await update.effective_message.reply_text("LLM is disabled. Set LLM_ENABLED=1 and provider API key.")
+    if not db.is_feature_enabled("agent"):
+        await update.effective_message.reply_text("Agent runtime is currently disabled by admin.")
         return
 
-    question = " ".join(context.args).strip()
+    if not settings.openrouter_api_key:
+        await update.effective_message.reply_text("LLM agent is disabled. Set OPENROUTER_API_KEY.")
+        return
+
+    tier_override: str | None = None
+    question_args = context.args
+    if len(context.args) >= 3 and context.args[0].lower() == "tier":
+        tier_override = context.args[1].strip()
+        question_args = context.args[2:]
+    question = " ".join(question_args).strip()
     if not question:
         await update.effective_message.reply_text("Usage: /llm <question about your stats>")
         return
@@ -544,38 +562,58 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("Please wait a bit before the next /llm question.")
         return
 
-    view = compute_status(db, user_id, now)
     db.increment_llm_usage(user_id, day_key, now)
-
-    prompt = (
-        "You are an analytics assistant for a gamified productivity tracker. "
-        "Answer the user's question using only the provided stats and be concise.\n\n"
-        f"User question: {question}\n\n"
-        "Stats:\n"
-        f"- Level: {view.level} ({view.title})\n"
-        f"- XP total: {view.xp_total}, XP this week: {view.xp_week}\n"
-        f"- XP to next level: {view.xp_remaining_to_next}\n"
-        f"- Streak: {view.streak_current}, longest: {view.streak_longest}\n"
-        f"- Week productive: {view.week.productive_minutes} min\n"
-        f"- Week spent: {view.week.spent_minutes} min\n"
-        f"- Week category minutes: {view.week_categories}\n"
-        f"- Economy remaining fun: {view.economy.remaining_fun_minutes} min\n"
-        f"- Active quests: {view.active_quests}\n"
-        "\nIf question asks missing data, say what is missing."
-    )
-
-    route = LlmRoute(
-        provider=settings.llm_provider,
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-    )
     pending = await update.effective_message.reply_text("🤖 Working on your question...")
-    answer = call_text(route, prompt, max_tokens=240)
+    result = run_llm_agent(
+        db=db,
+        settings=settings,
+        user_id=user_id,
+        now=now,
+        question=question,
+        tier_override=tier_override,
+    )
+    answer = str(result.get("answer", "")).strip()
+    model_used = str(result.get("model", "unknown"))
+    tier_used = str(result.get("tier", "unknown"))
+    status = str(result.get("status", "unknown"))
+    prompt_tokens = int(result.get("prompt_tokens", 0) or 0)
+    completion_tokens = int(result.get("completion_tokens", 0) or 0)
     if not answer:
         await pending.edit_text("LLM could not answer right now. Try again later.")
         return
+    await pending.edit_text(
+        f"{answer}\n\n`model: {model_used} | tier: {tier_used} | status: {status} | tok: {prompt_tokens}/{completion_tokens}`"
+    )
 
-    await pending.edit_text(answer)
+
+async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id, _, now = touch_user(update, context)
+    settings = get_settings(context)
+    db = get_db(context)
+    if not db.is_feature_enabled("search"):
+        await update.effective_message.reply_text("Search is currently disabled by admin.")
+        return
+    query = " ".join(context.args).strip()
+    if not query:
+        await update.effective_message.reply_text("Usage: /search <query>")
+        return
+    pending = await update.effective_message.reply_text("🔎 Searching web...")
+    res = run_search_tool(
+        db=db,
+        settings=settings,
+        user_id=user_id,
+        now=now,
+        query=query,
+        max_results=5,
+    )
+    if not res["ok"]:
+        await pending.edit_text(f"Search failed: {res['content']}")
+        return
+    provider = str(res.get("metadata", {}).get("provider", "unknown"))
+    cached = bool(res.get("metadata", {}).get("cached", False))
+    await pending.edit_text(
+        f"Search results ({provider}{', cached' if cached else ''}):\n\n{res['content']}"
+    )
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -733,6 +771,7 @@ def register_core_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("quiet_hours", cmd_quiet_hours))
     app.add_handler(CommandHandler("freeze", cmd_freeze))
     app.add_handler(CommandHandler("llm", cmd_llm))
+    app.add_handler(CommandHandler("search", cmd_search))
     app.add_handler(CommandHandler("rules", cmd_rules))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_form))

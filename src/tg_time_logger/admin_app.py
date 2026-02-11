@@ -97,6 +97,16 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
   </div>
 
   <div class="card">
+    <h2>Agent</h2>
+    <div class="grid" id="agent"></div>
+  </div>
+
+  <div class="card">
+    <h2>Search</h2>
+    <div class="grid" id="search"></div>
+  </div>
+
+  <div class="card">
     <div class="row">
       <button id="saveBtn">Save Config</button>
       <button id="snapshotBtn" class="secondary">Create Snapshot</button>
@@ -130,6 +140,23 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       "economy.milestone_block_minutes", "economy.milestone_bonus_minutes",
       "economy.xp_level2_base", "economy.xp_linear", "economy.xp_quadratic", "economy.level_bonus_scale_percent"
     ];
+    const agentBoolKeys = ["feature.agent_enabled", "agent.reasoning_enabled"];
+    const agentIntKeys = [
+      "agent.max_steps",
+      "agent.max_tool_calls",
+      "agent.max_step_input_tokens",
+      "agent.max_step_output_tokens",
+      "agent.max_total_tokens"
+    ];
+    const agentStringKeys = ["agent.default_tier"];
+    const searchBoolKeys = [
+      "feature.search_enabled",
+      "search.brave_enabled",
+      "search.tavily_enabled",
+      "search.serper_enabled"
+    ];
+    const searchIntKeys = ["search.cache_ttl_seconds"];
+    const searchStringKeys = ["search.provider_order"];
 
     const state = {};
     const token = new URLSearchParams(window.location.search).get("token");
@@ -147,6 +174,10 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       return `<label>${key}<input type="number" id="${key}" value="${value}" /></label>`;
     }
 
+    function textInput(key, value) {
+      return `<label>${key}<input type="text" id="${key}" value="${value ?? ""}" /></label>`;
+    }
+
     async function loadAll() {
       const cfgRes = await fetch(withToken("/api/config"));
       const cfg = await cfgRes.json();
@@ -154,6 +185,14 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       document.getElementById("features").innerHTML = featureKeys.map(k => boolInput(k, !!state[k])).join("");
       document.getElementById("jobs").innerHTML = jobKeys.map(k => boolInput(k, !!state[k])).join("");
       document.getElementById("economy").innerHTML = economyKeys.map(k => numberInput(k, state[k] ?? 0)).join("");
+      document.getElementById("agent").innerHTML =
+        agentBoolKeys.map(k => boolInput(k, !!state[k])).join("") +
+        agentIntKeys.map(k => numberInput(k, state[k] ?? 0)).join("") +
+        agentStringKeys.map(k => textInput(k, state[k] ?? "")).join("");
+      document.getElementById("search").innerHTML =
+        searchBoolKeys.map(k => boolInput(k, !!state[k])).join("") +
+        searchIntKeys.map(k => numberInput(k, state[k] ?? 0)).join("") +
+        searchStringKeys.map(k => textInput(k, state[k] ?? "")).join("");
 
       const snapRes = await fetch(withToken("/api/snapshots?limit=20"));
       const snaps = await snapRes.json();
@@ -174,6 +213,18 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       for (const k of economyKeys) {
         const el = document.getElementById(k);
         updates[k] = Number(el ? el.value : 0);
+      }
+      for (const k of agentBoolKeys.concat(searchBoolKeys)) {
+        const el = document.getElementById(k);
+        updates[k] = !!(el && el.checked);
+      }
+      for (const k of agentIntKeys.concat(searchIntKeys)) {
+        const el = document.getElementById(k);
+        updates[k] = Number(el ? el.value : 0);
+      }
+      for (const k of agentStringKeys.concat(searchStringKeys)) {
+        const el = document.getElementById(k);
+        updates[k] = el ? el.value : "";
       }
       return updates;
     }

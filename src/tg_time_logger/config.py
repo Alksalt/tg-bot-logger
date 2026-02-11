@@ -20,6 +20,12 @@ class Settings:
     admin_panel_token: str | None
     admin_host: str
     admin_port: int
+    openrouter_api_key: str | None
+    brave_search_api_key: str | None
+    tavily_api_key: str | None
+    serper_api_key: str | None
+    agent_models_path: Path
+    agent_directive_path: Path
 
 
 def _load_env_file(path: Path) -> None:
@@ -78,4 +84,10 @@ def load_settings() -> Settings:
         admin_panel_token=os.getenv("ADMIN_PANEL_TOKEN"),
         admin_host=os.getenv("ADMIN_HOST", "127.0.0.1"),
         admin_port=admin_port,
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        brave_search_api_key=os.getenv("BRAVE_SEARCH_API_KEY"),
+        tavily_api_key=os.getenv("TAVILY_API_KEY"),
+        serper_api_key=os.getenv("SERPER_API_KEY"),
+        agent_models_path=Path(os.getenv("AGENT_MODELS_PATH", "./agents/models.yaml")),
+        agent_directive_path=Path(os.getenv("AGENT_DIRECTIVE_PATH", "./agents/directives/llm_assistant.md")),
     )

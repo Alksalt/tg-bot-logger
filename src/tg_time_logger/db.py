@@ -149,6 +149,8 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "feature.shop_enabled": True,
     "feature.savings_enabled": True,
     "feature.economy_enabled": True,
+    "feature.agent_enabled": True,
+    "feature.search_enabled": True,
     "job.sunday_summary_enabled": True,
     "job.reminders_enabled": True,
     "job.midweek_enabled": True,
@@ -163,6 +165,18 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "economy.xp_linear": 80,
     "economy.xp_quadratic": 4,
     "economy.level_bonus_scale_percent": 100,
+    "agent.max_steps": 6,
+    "agent.max_tool_calls": 4,
+    "agent.max_step_input_tokens": 1800,
+    "agent.max_step_output_tokens": 420,
+    "agent.max_total_tokens": 6000,
+    "agent.reasoning_enabled": True,
+    "agent.default_tier": "free",
+    "search.cache_ttl_seconds": 21600,
+    "search.provider_order": "brave,tavily,serper",
+    "search.brave_enabled": True,
+    "search.tavily_enabled": True,
+    "search.serper_enabled": True,
 }
 
 JOB_CONFIG_KEYS = {
@@ -461,6 +475,16 @@ class Database:
                         target TEXT NOT NULL,
                         payload_json TEXT,
                         created_at TEXT NOT NULL
+                    );
+                """,
+                15: """
+                    CREATE TABLE IF NOT EXISTS tool_cache (
+                        tool_name TEXT NOT NULL,
+                        cache_key TEXT NOT NULL,
+                        response_json TEXT NOT NULL,
+                        fetched_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY(tool_name, cache_key)
                     );
                 """,
             }
@@ -772,6 +796,74 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def add_admin_audit(
+        self,
+        *,
+        actor: str,
+        action: str,
+        target: str,
+        payload: dict[str, Any] | None,
+        created_at: datetime,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO admin_audit_log(actor, action, target, payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    actor,
+                    action,
+                    target,
+                    json.dumps(payload) if payload is not None else None,
+                    created_at.isoformat(),
+                ),
+            )
+
+    def get_tool_cache(self, tool_name: str, cache_key: str, now: datetime) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT response_json, expires_at
+                FROM tool_cache
+                WHERE tool_name = ? AND cache_key = ?
+                """,
+                (tool_name, cache_key),
+            ).fetchone()
+        if row is None:
+            return None
+        expires_at = datetime.fromisoformat(str(row["expires_at"]))
+        if expires_at <= now:
+            return None
+        try:
+            payload = json.loads(str(row["response_json"]))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def set_tool_cache(self, tool_name: str, cache_key: str, payload: dict[str, Any], fetched_at: datetime, ttl_seconds: int) -> None:
+        expires_at = fetched_at + timedelta(seconds=max(1, ttl_seconds))
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tool_cache(tool_name, cache_key, response_json, fetched_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(tool_name, cache_key) DO UPDATE SET
+                    response_json=excluded.response_json,
+                    fetched_at=excluded.fetched_at,
+                    expires_at=excluded.expires_at
+                """,
+                (
+                    tool_name,
+                    cache_key,
+                    json.dumps(payload),
+                    fetched_at.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+
     def add_entry(
         self,
         user_id: int,
@@ -912,11 +1004,15 @@ class Database:
 
     def sum_level_bonus(self, user_id: int) -> int:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(bonus_fun_minutes), 0) AS total FROM level_up_events WHERE user_id = ?",
+            rows = conn.execute(
+                "SELECT level FROM level_up_events WHERE user_id = ?",
                 (user_id,),
-            ).fetchone()
-        return int(row["total"]) if row else 0
+            ).fetchall()
+        tuning = self.get_economy_tuning()
+        total = 0
+        for row in rows:
+            total += level_up_bonus_minutes(int(row["level"]), tuning=tuning)
+        return total
 
     def sum_completed_quest_rewards(self, user_id: int) -> int:
         with self._connect() as conn:

@@ -27,14 +27,20 @@ DATABASE_PATH=./data/app.db
 TZ=Europe/Oslo
 LLM_ENABLED=0
 OPENAI_API_KEY=<key>
+OPENROUTER_API_KEY=<key>
 ANTHROPIC_API_KEY=<key>
 GOOGLE_API_KEY=<key>
+BRAVE_SEARCH_API_KEY=<key>
+TAVILY_API_KEY=<key>
+SERPER_API_KEY=<key>
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-5-mini
 LLM_ROUTER_CONFIG=./llm_router.yaml
 ADMIN_PANEL_TOKEN=<strong_random_token>
 ADMIN_HOST=127.0.0.1
 ADMIN_PORT=8080
+AGENT_MODELS_PATH=./agents/models.yaml
+AGENT_DIRECTIVE_PATH=./agents/directives/llm_assistant.md
 ```
 
 LLM model/provider defaults are read from `/Users/alt/Library/CloudStorage/OneDrive-Personal/automations/tg-time-logger/llm_router.yaml`.
@@ -79,6 +85,8 @@ Core:
 - `/rules remove <id>`
 - `/rules clear`
 - `/llm <question>`
+- `/llm tier <free|open_source_cheap|top_tier> <question>`
+- `/search <query>`
 - `/start [study|build|training|job|spend] [note]`
 - `/stop`
 
@@ -131,6 +139,17 @@ This v2 upgrade adds:
 - global app config (feature toggles, economy tuning, job toggles)
 - config snapshots and rollback
 - admin audit log
+- V3 `agents/` runtime scaffold with directive/execution/orchestration split
+- tiered model policy via `agents/models.yaml`
+- web search tool (Brave/Tavily/Serper fallback) with cache + dedupe
+
+## V3 Agent Layout
+
+- `agents/directives/` human SOP specs.
+- `agents/execution/` deterministic runtime logic.
+- `agents/orchestration/` thin wiring layer.
+- `agents/tools/` tool implementations/registry.
+- `TOOLS.md` tool manifest.
 
 ## Quest Generation
 
