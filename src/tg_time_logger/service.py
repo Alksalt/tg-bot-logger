@@ -68,14 +68,15 @@ def normalize_category(raw: str | None) -> str:
 
 
 def _check_level_ups(db: Database, user_id: int, now: datetime) -> list[LevelUpEvent]:
+    tuning = db.get_economy_tuning()
     total_xp = db.sum_xp(user_id)
-    current_level = level_from_xp(total_xp)
+    current_level = level_from_xp(total_xp, tuning=tuning)
     max_recorded = db.max_level_event_level(user_id)
     created: list[LevelUpEvent] = []
     for lvl in range(max_recorded + 1, current_level + 1):
         if lvl < 2:
             continue
-        event = db.add_level_up_event(user_id, lvl, now)
+        event = db.add_level_up_event(user_id, lvl, now, tuning=tuning)
         if event:
             created.append(event)
     return created
@@ -91,8 +92,11 @@ def add_productive_entry(
     source: str,
     timer_mode: bool = False,
 ) -> ProductiveLogOutcome:
+    tuning = db.get_economy_tuning()
+    economy_enabled = db.is_feature_enabled("economy")
     normalized = normalize_category(category)
     deep_mult = deep_work_multiplier(minutes) if timer_mode else 1.0
+    fun_earned = fun_from_minutes(normalized, minutes, tuning=tuning) if economy_enabled else 0
 
     entry = db.add_entry(
         user_id=user_id,
@@ -102,14 +106,14 @@ def add_productive_entry(
         note=note,
         created_at=created_at,
         source=source,
-        xp_earned=minutes,
-        fun_earned=fun_from_minutes(normalized, minutes),
+        xp_earned=minutes if economy_enabled else 0,
+        fun_earned=fun_earned,
         deep_work_multiplier=deep_mult,
     )
 
     streak = db.refresh_streak(user_id, created_at)
     s_mult = streak_multiplier(streak.current_streak)
-    if normalized == "job":
+    if not economy_enabled or normalized == "job":
         final_xp = 0
     else:
         final_xp = math.floor(minutes * s_mult * deep_mult)
@@ -146,6 +150,7 @@ def add_productive_entry(
 
 
 def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
+    tuning = db.get_economy_tuning()
     week = week_range_for(now)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -163,7 +168,7 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
 
     xp_total = db.sum_xp(user_id)
     xp_week = db.sum_xp(user_id, start=week.start, end=now)
-    lp = level_progress(xp_total)
+    lp = level_progress(xp_total, tuning=tuning)
 
     streak = db.get_streak(user_id, now)
     streak_mult = streak_multiplier(streak.current_streak)
@@ -186,6 +191,7 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         wheel_bonus_minutes=wheel_bonus,
         spent_fun_minutes=all_spent,
         saved_fun_minutes=saved,
+        tuning=tuning,
     )
 
     return StatusView(

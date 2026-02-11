@@ -17,6 +17,7 @@ from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
 
 logger = logging.getLogger(__name__)
+SUNDAY_FUND_ALLOWED = {50, 60, 70}
 
 
 @dataclass(frozen=True)
@@ -36,7 +37,18 @@ def evaluate_reminders(
     return ReminderDecision(inactivity=inactivity_due, daily_goal=goal_due)
 
 
+def sunday_fund_deposit_amount(available_fun_minutes: int, percent: int) -> int:
+    if percent not in SUNDAY_FUND_ALLOWED:
+        return 0
+    if available_fun_minutes <= 0:
+        return 0
+    return max(0, (available_fun_minutes * percent) // 100)
+
+
 async def run_sunday_summary(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("sunday_summary"):
+        logger.info("job disabled: sunday_summary")
+        return
     now = now_local(settings.tz)
     bot = Bot(token=settings.telegram_bot_token)
     week = week_range_for(now)
@@ -60,6 +72,22 @@ async def run_sunday_summary(db: Database, settings: Settings) -> None:
                     f"{result_text} +{bonus} fun minutes!"
                 )
 
+        sunday_percent = int(profile.get("sunday_fund_percent") or 0)
+        auto_msg = ""
+        auto_key = f"sunday-fund:{week.start.date().isoformat()}"
+        if sunday_percent in SUNDAY_FUND_ALLOWED and not db.was_event_sent(user_id, auto_key):
+            available = max(view.economy.remaining_fun_minutes, 0)
+            amount = sunday_fund_deposit_amount(available, sunday_percent)
+            if amount > 0:
+                db.ensure_fund_goal(user_id, now)
+                goal = db.deposit_to_savings(user_id, amount, now)
+                if goal:
+                    auto_msg = (
+                        f"\n\n🏦 Sunday auto-transfer: moved {amount}m ({sunday_percent}%) "
+                        f"to '{goal.name}'."
+                    )
+            db.mark_event_sent(user_id, auto_key, now)
+
         categories = view.week_categories
         facts = (
             f"- Total productive: {view.week.productive_minutes / 60:.2f}h "
@@ -74,7 +102,7 @@ async def run_sunday_summary(db: Database, settings: Settings) -> None:
         )
 
         ctx = LlmContext(
-            enabled=settings.llm_enabled,
+            enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
             route=LlmRoute(
                 provider=settings.llm_provider,
                 model=settings.llm_model,
@@ -90,12 +118,19 @@ async def run_sunday_summary(db: Database, settings: Settings) -> None:
             f"Fun remaining: {format_minutes_hm(view.economy.remaining_fun_minutes)}\n\n"
             f"{summary}"
             f"{wheel_msg}"
+            f"{auto_msg}"
         )
         await bot.send_message(chat_id=chat_id, text=text)
         logger.info("sent sunday summary user_id=%s", user_id)
 
 
 async def run_reminders(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("reminders"):
+        logger.info("job disabled: reminders")
+        return
+    if not db.is_feature_enabled("reminders"):
+        logger.info("feature disabled: reminders")
+        return
     now = now_local(settings.tz)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     bot = Bot(token=settings.telegram_bot_token)
@@ -115,6 +150,7 @@ async def run_reminders(db: Database, settings: Settings) -> None:
             available = max(status.economy.remaining_fun_minutes, 0)
             amount = min(auto_save, available)
             if amount > 0:
+                db.ensure_fund_goal(user_id, now)
                 goal = db.deposit_to_savings(user_id, amount, now)
                 if goal:
                     await bot.send_message(
@@ -204,6 +240,9 @@ async def run_reminders(db: Database, settings: Settings) -> None:
 
 
 async def run_midweek(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("midweek"):
+        logger.info("job disabled: midweek")
+        return
     now = now_local(settings.tz)
     bot = Bot(token=settings.telegram_bot_token)
     week = week_range_for(now)
@@ -241,6 +280,12 @@ async def run_midweek(db: Database, settings: Settings) -> None:
 
 
 async def run_check_quests(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("check_quests"):
+        logger.info("job disabled: check_quests")
+        return
+    if not db.is_feature_enabled("quests"):
+        logger.info("feature disabled: quests")
+        return
     now = now_local(settings.tz)
     bot = Bot(token=settings.telegram_bot_token)
 
@@ -252,7 +297,7 @@ async def run_check_quests(db: Database, settings: Settings) -> None:
             db,
             user_id,
             now,
-            llm_enabled=settings.llm_enabled,
+            llm_enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
             llm_route=LlmRoute(
                 provider=settings.llm_provider,
                 model=settings.llm_model,
@@ -271,6 +316,9 @@ async def run_check_quests(db: Database, settings: Settings) -> None:
 
 
 def run_job(job_name: str, db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled(job_name):
+        logger.info("job disabled: %s", job_name)
+        return
     if job_name == "sunday_summary":
         asyncio.run(run_sunday_summary(db, settings))
     elif job_name == "reminders":

@@ -20,6 +20,9 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id, _, now = touch_user(update, context)
     db = _db(context)
     settings = get_settings(context)
+    if not db.is_feature_enabled("quests"):
+        await update.effective_message.reply_text("Quests are currently disabled by admin.")
+        return
 
     if context.args and context.args[0].lower() == "history":
         week = week_range_for(now)
@@ -37,7 +40,7 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         db,
         user_id,
         now,
-        llm_enabled=settings.llm_enabled,
+        llm_enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
         llm_route=LlmRoute(
             provider=settings.llm_provider,
             model=settings.llm_model,

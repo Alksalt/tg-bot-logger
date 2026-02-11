@@ -195,3 +195,13 @@ def test_shop_add_parser_accepts_smart_quotes_and_duration() -> None:
     assert name == "Apple Watch"
     assert cost == 15000
     assert nok is None
+
+
+def test_ensure_fund_goal_and_sunday_percent_settings(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 2, 9)
+    goal = db.ensure_fund_goal(user_id=1, now=now)
+    assert goal.name == "Save fund"
+    db.update_sunday_fund_percent(user_id=1, percent=60)
+    settings = db.get_settings(1)
+    assert settings.sunday_fund_percent == 60

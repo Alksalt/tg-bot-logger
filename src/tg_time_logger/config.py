@@ -17,6 +17,9 @@ class Settings:
     llm_model: str
     llm_api_key: str | None
     llm_router_config_path: Path
+    admin_panel_token: str | None
+    admin_host: str
+    admin_port: int
 
 
 def _load_env_file(path: Path) -> None:
@@ -57,6 +60,11 @@ def load_settings() -> Settings:
         model_override=os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL"),
         env_getter=os.getenv,
     )
+    admin_port_raw = os.getenv("ADMIN_PORT", "8080")
+    try:
+        admin_port = int(admin_port_raw)
+    except ValueError:
+        admin_port = 8080
 
     return Settings(
         telegram_bot_token=token,
@@ -67,4 +75,7 @@ def load_settings() -> Settings:
         llm_model=route.model,
         llm_api_key=route.api_key,
         llm_router_config_path=router_path,
+        admin_panel_token=os.getenv("ADMIN_PANEL_TOKEN"),
+        admin_host=os.getenv("ADMIN_HOST", "127.0.0.1"),
+        admin_port=admin_port,
     )

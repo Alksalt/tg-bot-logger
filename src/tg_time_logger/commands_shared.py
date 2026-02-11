@@ -47,8 +47,9 @@ def get_settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
 
 def llm_context(context: ContextTypes.DEFAULT_TYPE) -> LlmContext:
     settings = get_settings(context)
+    db = get_db(context)
     return LlmContext(
-        enabled=settings.llm_enabled,
+        enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
         route=LlmRoute(
             provider=settings.llm_provider,
             model=settings.llm_model,

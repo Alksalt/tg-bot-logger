@@ -112,9 +112,11 @@ HELP_TOPICS: dict[str, str] = {
         "/save\n"
         "/save goal <duration> [name]\n"
         "/save fund <duration>\n\n"
+        "/save sunday on 50|60|70\n"
+        "/save sunday off\n\n"
         "Simple flow:\n"
-        "1) Set a goal: /save goal 2000m Device fund\n"
-        "2) Add into fund: /save fund 200m\n"
+        "1) Add into fund directly: /save fund 200m\n"
+        "2) Optional goal: /save goal 2000m Device fund\n"
         "Fund is locked for shop redemptions."
     ),
     "rules": (
@@ -520,6 +522,10 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings = get_settings(context)
     db = get_db(context)
 
+    if not db.is_feature_enabled("llm"):
+        await update.effective_message.reply_text("LLM features are currently disabled by admin.")
+        return
+
     if not settings.llm_enabled or not settings.llm_api_key:
         await update.effective_message.reply_text("LLM is disabled. Set LLM_ENABLED=1 and provider API key.")
         return
@@ -640,8 +646,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     settings = get_settings(context)
+    db = get_db(context)
     text = (update.effective_message.text or "").strip()
     if not text or text.startswith("/"):
+        return
+
+    if not db.is_feature_enabled("llm"):
+        await update.effective_message.reply_text(
+            "Nothing happened. Free-form parsing is disabled by admin."
+        )
         return
 
     if not settings.llm_enabled or not settings.llm_api_key:
@@ -673,7 +686,6 @@ async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    db = get_db(context)
     if parsed.action == "log":
         _ = add_productive_entry(
             db=db,
@@ -724,4 +736,5 @@ def register_core_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("rules", cmd_rules))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_form))
-    app.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
+    # Keep unknown-command fallback in a late group so real command handlers run first.
+    app.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command), group=100)

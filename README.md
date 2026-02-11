@@ -32,6 +32,9 @@ GOOGLE_API_KEY=<key>
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-5-mini
 LLM_ROUTER_CONFIG=./llm_router.yaml
+ADMIN_PANEL_TOKEN=<strong_random_token>
+ADMIN_HOST=127.0.0.1
+ADMIN_PORT=8080
 ```
 
 LLM model/provider defaults are read from `/Users/alt/Library/CloudStorage/OneDrive-Personal/automations/tg-time-logger/llm_router.yaml`.
@@ -42,6 +45,16 @@ Default route is `openai:gpt-5-mini`.
 ```bash
 uv run python bot.py
 ```
+
+Admin panel:
+
+```bash
+uv run python admin.py
+```
+
+Open:
+- `http://127.0.0.1:8080/?token=<ADMIN_PANEL_TOKEN>`
+- If `ADMIN_PANEL_TOKEN` is empty, panel is open without auth (not recommended).
 
 ## Jobs
 
@@ -88,6 +101,8 @@ Quests/shop/savings:
 - `/save`
 - `/save goal <target_duration> [name]`
 - `/save fund <duration>`
+- `/save sunday on 50|60|70`
+- `/save sunday off`
 - `/save auto <duration>`
 
 Savings behavior:
@@ -113,6 +128,9 @@ This v2 upgrade adds:
 - savings goals
 - llm usage tracking
 - user rules notes
+- global app config (feature toggles, economy tuning, job toggles)
+- config snapshots and rollback
+- admin audit log
 
 ## Quest Generation
 

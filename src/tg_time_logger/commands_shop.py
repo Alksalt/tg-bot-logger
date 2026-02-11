@@ -67,6 +67,9 @@ def _parse_shop_add(raw_args: list[str]) -> tuple[str, str, int, float | None]:
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    if not db.is_feature_enabled("shop"):
+        await update.effective_message.reply_text("Shop is currently disabled by admin.")
+        return
 
     if not context.args:
         view = compute_status(db, user_id, now)
@@ -114,6 +117,9 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    if not db.is_feature_enabled("shop"):
+        await update.effective_message.reply_text("Shop is currently disabled by admin.")
+        return
 
     if not context.args:
         await update.effective_message.reply_text("Usage: /redeem <item_id|item_name> OR /redeem history")
@@ -173,20 +179,26 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    if not db.is_feature_enabled("savings"):
+        await update.effective_message.reply_text("Savings fund is currently disabled by admin.")
+        return
 
     if not context.args:
         goal = db.get_active_savings_goal(user_id)
         if not goal:
             await update.effective_message.reply_text(
-                "No save fund yet. Use /save goal <duration> [name]."
+                "No save fund yet. Use /save fund <duration> or /save goal <duration> [name]."
             )
             return
         pct = (goal.saved_fun_minutes / goal.target_fun_minutes * 100) if goal.target_fun_minutes else 0
+        settings = db.get_settings(user_id)
+        sunday = settings.sunday_fund_percent
         await update.effective_message.reply_text(
             (
                 "🏦 Save fund\n"
                 f"Goal: {goal.name}\n"
                 f"Progress: {goal.saved_fun_minutes}/{goal.target_fun_minutes}m ({pct:.1f}%)\n"
+                f"Sunday auto-transfer: {'off' if sunday == 0 else f'{sunday}% on'}\n"
                 "Use /save fund <duration> to add minutes."
             )
         )
@@ -216,13 +228,38 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if view.economy.remaining_fun_minutes < minutes:
             await update.effective_message.reply_text("Not enough available fun minutes to deposit")
             return
+        db.ensure_fund_goal(user_id, now)
         goal = db.deposit_to_savings(user_id, minutes, now)
         if not goal:
-            await update.effective_message.reply_text("No save goal. Use /save goal <duration> first.")
+            await update.effective_message.reply_text("Could not update save fund right now. Try again.")
             return
         await update.effective_message.reply_text(
             f"Deposited {minutes}m into '{goal.name}' ({goal.saved_fun_minutes}/{goal.target_fun_minutes})"
         )
+        return
+
+    if action == "sunday":
+        if len(context.args) == 1:
+            percent = db.get_settings(user_id).sunday_fund_percent
+            await update.effective_message.reply_text(
+                f"Sunday auto-transfer is {'off' if percent == 0 else f'on ({percent}%)'}.\n"
+                "Use /save sunday on 50|60|70 or /save sunday off."
+            )
+            return
+        sub = context.args[1].lower()
+        if sub == "off":
+            db.update_sunday_fund_percent(user_id, 0)
+            await update.effective_message.reply_text("Sunday auto-transfer disabled.")
+            return
+        if sub == "on":
+            if len(context.args) < 3 or context.args[2] not in {"50", "60", "70"}:
+                await update.effective_message.reply_text("Usage: /save sunday on 50|60|70")
+                return
+            percent = int(context.args[2])
+            db.update_sunday_fund_percent(user_id, percent)
+            await update.effective_message.reply_text(f"Sunday auto-transfer enabled: {percent}% of available fun.")
+            return
+        await update.effective_message.reply_text("Usage: /save sunday on 50|60|70 OR /save sunday off")
         return
 
     if action == "auto" and len(context.args) >= 2:
@@ -241,7 +278,7 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await update.effective_message.reply_text(
-        "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>"
+        "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off"
     )
 
 

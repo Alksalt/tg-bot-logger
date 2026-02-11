@@ -42,6 +42,7 @@ class UserSettings:
     quiet_hours: str | None
     shop_budget_minutes: int | None
     auto_save_minutes: int
+    sunday_fund_percent: int
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,36 @@ DEFAULT_SHOP_ITEMS: list[tuple[str, str, int, float]] = [
 ]
 
 STREAK_MINUTES_REQUIRED = 120
+
+APP_CONFIG_DEFAULTS: dict[str, Any] = {
+    "feature.llm_enabled": True,
+    "feature.quests_enabled": True,
+    "feature.reminders_enabled": True,
+    "feature.shop_enabled": True,
+    "feature.savings_enabled": True,
+    "feature.economy_enabled": True,
+    "job.sunday_summary_enabled": True,
+    "job.reminders_enabled": True,
+    "job.midweek_enabled": True,
+    "job.check_quests_enabled": True,
+    "economy.fun_rate.study": 15,
+    "economy.fun_rate.build": 20,
+    "economy.fun_rate.training": 20,
+    "economy.fun_rate.job": 4,
+    "economy.milestone_block_minutes": 600,
+    "economy.milestone_bonus_minutes": 180,
+    "economy.xp_level2_base": 300,
+    "economy.xp_linear": 80,
+    "economy.xp_quadratic": 4,
+    "economy.level_bonus_scale_percent": 100,
+}
+
+JOB_CONFIG_KEYS = {
+    "sunday_summary": "job.sunday_summary_enabled",
+    "reminders": "job.reminders_enabled",
+    "midweek": "job.midweek_enabled",
+    "check_quests": "job.check_quests_enabled",
+}
 
 
 class Database:
@@ -403,6 +434,35 @@ class Database:
                     CREATE INDEX IF NOT EXISTS idx_user_rules_user_created
                     ON user_rules(user_id, created_at DESC);
                 """,
+                13: """
+                    ALTER TABLE user_settings
+                    ADD COLUMN sunday_fund_percent INTEGER NOT NULL DEFAULT 0;
+                """,
+                14: """
+                    CREATE TABLE IF NOT EXISTS app_config (
+                        key TEXT PRIMARY KEY,
+                        value_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        updated_by TEXT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS config_snapshots (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        config_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        created_by TEXT,
+                        note TEXT
+                    );
+
+                    CREATE TABLE IF NOT EXISTS admin_audit_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        actor TEXT,
+                        action TEXT NOT NULL,
+                        target TEXT NOT NULL,
+                        payload_json TEXT,
+                        created_at TEXT NOT NULL
+                    );
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -473,7 +533,7 @@ class Database:
                 """
                 SELECT p.user_id, p.chat_id, p.last_seen_at,
                        s.reminders_enabled, s.daily_goal_minutes, s.quiet_hours,
-                       s.shop_budget_minutes, s.auto_save_minutes
+                       s.shop_budget_minutes, s.auto_save_minutes, s.sunday_fund_percent
                 FROM user_profiles p
                 LEFT JOIN user_settings s ON s.user_id = p.user_id
                 """
@@ -486,7 +546,7 @@ class Database:
             row = conn.execute(
                 """
                 SELECT user_id, reminders_enabled, daily_goal_minutes, quiet_hours,
-                       shop_budget_minutes, auto_save_minutes
+                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent
                 FROM user_settings WHERE user_id = ?
                 """,
                 (user_id,),
@@ -499,6 +559,7 @@ class Database:
             quiet_hours=row["quiet_hours"],
             shop_budget_minutes=row["shop_budget_minutes"],
             auto_save_minutes=int(row["auto_save_minutes"] or 0),
+            sunday_fund_percent=int(row["sunday_fund_percent"] or 0),
         )
 
     def update_reminders_enabled(self, user_id: int, enabled: bool) -> None:
@@ -533,6 +594,184 @@ class Database:
                 (max(0, minutes), user_id),
             )
 
+    def update_sunday_fund_percent(self, user_id: int, percent: int) -> None:
+        allowed = {0, 50, 60, 70}
+        normalized = percent if percent in allowed else 0
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)", (user_id,))
+            conn.execute(
+                "UPDATE user_settings SET sunday_fund_percent = ? WHERE user_id = ?",
+                (normalized, user_id),
+            )
+
+    def get_app_config(self) -> dict[str, Any]:
+        config = dict(APP_CONFIG_DEFAULTS)
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, value_json FROM app_config").fetchall()
+        for row in rows:
+            key = str(row["key"])
+            if key not in APP_CONFIG_DEFAULTS:
+                continue
+            try:
+                config[key] = json.loads(str(row["value_json"]))
+            except json.JSONDecodeError:
+                continue
+        return config
+
+    def set_app_config(self, updates: dict[str, Any], actor: str = "system", note: str | None = None) -> dict[str, Any]:
+        if not updates:
+            return self.get_app_config()
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            for key, value in updates.items():
+                if key not in APP_CONFIG_DEFAULTS:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO app_config(key, value_json, updated_at, updated_by)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json=excluded.value_json,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by
+                    """,
+                    (key, json.dumps(value), now, actor),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO admin_audit_log(actor, action, target, payload_json, created_at)
+                    VALUES (?, 'config.update', ?, ?, ?)
+                    """,
+                    (actor, key, json.dumps({"value": value, "note": note}), now),
+                )
+        return self.get_app_config()
+
+    def get_app_config_value(self, key: str) -> Any:
+        config = self.get_app_config()
+        return config.get(key, APP_CONFIG_DEFAULTS.get(key))
+
+    def is_feature_enabled(self, feature_name: str) -> bool:
+        key = f"feature.{feature_name}_enabled"
+        value = self.get_app_config_value(key)
+        if value is None:
+            return True
+        return bool(value)
+
+    def is_job_enabled(self, job_name: str) -> bool:
+        key = JOB_CONFIG_KEYS.get(job_name)
+        if not key:
+            return True
+        value = self.get_app_config_value(key)
+        if value is None:
+            return True
+        return bool(value)
+
+    def get_economy_tuning(self) -> dict[str, int]:
+        config = self.get_app_config()
+
+        def _i(key: str, default: int) -> int:
+            try:
+                return int(config.get(key, default))
+            except (TypeError, ValueError):
+                return default
+
+        return {
+            "fun_rate_study": _i("economy.fun_rate.study", 15),
+            "fun_rate_build": _i("economy.fun_rate.build", 20),
+            "fun_rate_training": _i("economy.fun_rate.training", 20),
+            "fun_rate_job": _i("economy.fun_rate.job", 4),
+            "milestone_block_minutes": max(1, _i("economy.milestone_block_minutes", 600)),
+            "milestone_bonus_minutes": max(0, _i("economy.milestone_bonus_minutes", 180)),
+            "xp_level2_base": max(1, _i("economy.xp_level2_base", 300)),
+            "xp_linear": max(0, _i("economy.xp_linear", 80)),
+            "xp_quadratic": max(0, _i("economy.xp_quadratic", 4)),
+            "level_bonus_scale_percent": max(0, _i("economy.level_bonus_scale_percent", 100)),
+        }
+
+    def create_config_snapshot(self, actor: str = "system", note: str | None = None) -> int:
+        now = datetime.now().isoformat()
+        payload = json.dumps(self.get_app_config())
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO config_snapshots(config_json, created_at, created_by, note)
+                VALUES (?, ?, ?, ?)
+                """,
+                (payload, now, actor, note),
+            )
+            conn.execute(
+                """
+                INSERT INTO admin_audit_log(actor, action, target, payload_json, created_at)
+                VALUES (?, 'config.snapshot', 'all', ?, ?)
+                """,
+                (actor, json.dumps({"snapshot_id": int(cur.lastrowid), "note": note}), now),
+            )
+        return int(cur.lastrowid)
+
+    def list_config_snapshots(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, created_by, note
+                FROM config_snapshots
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def restore_config_snapshot(self, snapshot_id: int, actor: str = "system") -> bool:
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, config_json FROM config_snapshots WHERE id = ?",
+                (snapshot_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            try:
+                payload = json.loads(str(row["config_json"]))
+            except json.JSONDecodeError:
+                return False
+            if not isinstance(payload, dict):
+                return False
+            for key, value in payload.items():
+                if key not in APP_CONFIG_DEFAULTS:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO app_config(key, value_json, updated_at, updated_by)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json=excluded.value_json,
+                        updated_at=excluded.updated_at,
+                        updated_by=excluded.updated_by
+                    """,
+                    (key, json.dumps(value), now, actor),
+                )
+            conn.execute(
+                """
+                INSERT INTO admin_audit_log(actor, action, target, payload_json, created_at)
+                VALUES (?, 'config.restore', 'all', ?, ?)
+                """,
+                (actor, json.dumps({"snapshot_id": snapshot_id}), now),
+            )
+        return True
+
+    def list_admin_audit(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, actor, action, target, payload_json, created_at
+                FROM admin_audit_log
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def add_entry(
         self,
         user_id: int,
@@ -549,11 +788,16 @@ class Database:
         if kind not in {"productive", "spend"}:
             raise ValueError("kind must be productive or spend")
 
+        tuning = self.get_economy_tuning()
+        economy_enabled = self.is_feature_enabled("economy")
         if kind == "productive":
             normalized_category = category if category in PRODUCTIVE_CATEGORIES else "build"
             default_xp = 0 if normalized_category == "job" else minutes
+            if not economy_enabled:
+                default_xp = 0
             computed_xp = max(0, xp_earned if xp_earned is not None else default_xp)
-            computed_fun = max(0, fun_earned if fun_earned is not None else fun_from_minutes(normalized_category, minutes))
+            default_fun = fun_from_minutes(normalized_category, minutes, tuning=tuning) if economy_enabled else 0
+            computed_fun = max(0, fun_earned if fun_earned is not None else default_fun)
         else:
             normalized_category = "spend"
             computed_xp = 0
@@ -1027,14 +1271,20 @@ class Database:
             ).fetchone()
         return int(row["lvl"]) if row else 1
 
-    def add_level_up_event(self, user_id: int, level: int, created_at: datetime) -> LevelUpEvent | None:
+    def add_level_up_event(
+        self,
+        user_id: int,
+        level: int,
+        created_at: datetime,
+        tuning: dict[str, int] | None = None,
+    ) -> LevelUpEvent | None:
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO level_up_events(user_id, level, bonus_fun_minutes, created_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (user_id, level, level_up_bonus_minutes(level), created_at.isoformat()),
+                (user_id, level, level_up_bonus_minutes(level, tuning=tuning), created_at.isoformat()),
             )
             if cur.rowcount == 0:
                 return None
@@ -1289,6 +1539,12 @@ class Database:
             updated = conn.execute("SELECT * FROM savings_goals WHERE id = ?", (goal.id,)).fetchone()
         assert updated is not None
         return _row_to_savings(updated)
+
+    def ensure_fund_goal(self, user_id: int, now: datetime) -> SavingsGoal:
+        goal = self.get_active_savings_goal(user_id)
+        if goal:
+            return goal
+        return self.create_savings_goal(user_id, "Save fund", 1, now)
 
     def list_savings_goals(self, user_id: int, active_only: bool = False) -> list[SavingsGoal]:
         with self._connect() as conn:

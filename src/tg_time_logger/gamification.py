@@ -14,6 +14,19 @@ FUN_RATE_PER_HOUR = {
     "job": 4,
 }
 
+DEFAULT_ECONOMY_TUNING = {
+    "fun_rate_study": 15,
+    "fun_rate_build": 20,
+    "fun_rate_training": 20,
+    "fun_rate_job": 4,
+    "milestone_block_minutes": 600,
+    "milestone_bonus_minutes": 180,
+    "xp_level2_base": 300,
+    "xp_linear": 80,
+    "xp_quadratic": 4,
+    "level_bonus_scale_percent": 100,
+}
+
 TITLES = {
     1: "Novice",
     2: "Apprentice",
@@ -91,37 +104,57 @@ class EconomyBreakdown:
     remaining_fun_minutes: int
 
 
-def fun_from_minutes(category: str, minutes: int) -> int:
-    if category not in FUN_RATE_PER_HOUR:
+def _effective_tuning(tuning: dict[str, int] | None = None) -> dict[str, int]:
+    if not tuning:
+        return dict(DEFAULT_ECONOMY_TUNING)
+    merged = dict(DEFAULT_ECONOMY_TUNING)
+    merged.update(tuning)
+    return merged
+
+
+def fun_from_minutes(category: str, minutes: int, tuning: dict[str, int] | None = None) -> int:
+    rates = _effective_tuning(tuning)
+    fun_rate = {
+        "study": int(rates["fun_rate_study"]),
+        "build": int(rates["fun_rate_build"]),
+        "training": int(rates["fun_rate_training"]),
+        "job": int(rates["fun_rate_job"]),
+    }
+    if category not in fun_rate:
         return 0
-    return max(0, math.floor(minutes * FUN_RATE_PER_HOUR[category] / 60))
+    return max(0, math.floor(minutes * fun_rate[category] / 60))
 
 
-def xp_for_level(level: int) -> int:
+def xp_for_level(level: int, tuning: dict[str, int] | None = None) -> int:
+    cfg = _effective_tuning(tuning)
     if level <= 1:
         return 0
     if level == 2:
-        return 300
+        return max(1, int(cfg["xp_level2_base"]))
     k = level - 2
-    return 300 + (80 * k) + (4 * k * k)
+    return (
+        int(cfg["xp_level2_base"])
+        + (int(cfg["xp_linear"]) * k)
+        + (int(cfg["xp_quadratic"]) * k * k)
+    )
 
 
-def total_xp_for_level(level: int) -> int:
+def total_xp_for_level(level: int, tuning: dict[str, int] | None = None) -> int:
     if level <= 1:
         return 0
     total = 0
     for lvl in range(2, level + 1):
-        total += xp_for_level(lvl)
+        total += xp_for_level(lvl, tuning=tuning)
     return total
 
 
-def level_from_xp(total_xp: int) -> int:
+def level_from_xp(total_xp: int, tuning: dict[str, int] | None = None) -> int:
     xp = max(0, total_xp)
     level = 1
     accumulated = 0
     while True:
         next_level = level + 1
-        needed = xp_for_level(next_level)
+        needed = xp_for_level(next_level, tuning=tuning)
         if accumulated + needed > xp:
             break
         accumulated += needed
@@ -135,11 +168,11 @@ def get_title(level: int) -> str:
     return TITLES.get(level, f"Level {level}")
 
 
-def level_progress(total_xp: int) -> LevelProgress:
+def level_progress(total_xp: int, tuning: dict[str, int] | None = None) -> LevelProgress:
     xp = max(0, total_xp)
-    level = level_from_xp(xp)
-    current_floor = total_xp_for_level(level)
-    next_total = total_xp_for_level(level + 1)
+    level = level_from_xp(xp, tuning=tuning)
+    current_floor = total_xp_for_level(level, tuning=tuning)
+    next_total = total_xp_for_level(level + 1, tuning=tuning)
     span = max(next_total - current_floor, 1)
     current_level_xp = xp - current_floor
     remaining = max(next_total - xp, 0)
@@ -174,9 +207,12 @@ def deep_work_multiplier(minutes: int) -> float:
     return 1.0
 
 
-def calculate_milestone_bonus(productive_minutes: int) -> tuple[int, int]:
-    blocks = max(0, productive_minutes) // 600
-    return blocks, blocks * 180
+def calculate_milestone_bonus(productive_minutes: int, tuning: dict[str, int] | None = None) -> tuple[int, int]:
+    cfg = _effective_tuning(tuning)
+    block_minutes = max(1, int(cfg["milestone_block_minutes"]))
+    block_bonus = max(0, int(cfg["milestone_bonus_minutes"]))
+    blocks = max(0, productive_minutes) // block_minutes
+    return blocks, blocks * block_bonus
 
 
 def build_economy(
@@ -187,8 +223,9 @@ def build_economy(
     wheel_bonus_minutes: int,
     spent_fun_minutes: int,
     saved_fun_minutes: int,
+    tuning: dict[str, int] | None = None,
 ) -> EconomyBreakdown:
-    _, milestone_bonus = calculate_milestone_bonus(productive_minutes)
+    _, milestone_bonus = calculate_milestone_bonus(productive_minutes, tuning=tuning)
     earned = max(0, base_fun_minutes) + milestone_bonus + max(0, level_bonus_minutes) + max(0, quest_bonus_minutes) + max(0, wheel_bonus_minutes)
     remaining = earned - max(0, spent_fun_minutes) - max(0, saved_fun_minutes)
     return EconomyBreakdown(
@@ -229,12 +266,15 @@ LEVEL_BONUS_MILESTONES = {
 }
 
 
-def level_up_bonus_minutes(level: int) -> int:
+def level_up_bonus_minutes(level: int, tuning: dict[str, int] | None = None) -> int:
+    cfg = _effective_tuning(tuning)
     lvl = max(1, level)
     base = 60 * lvl
     curve = 5 * lvl * lvl
     milestone = LEVEL_BONUS_MILESTONES.get(lvl, 0)
-    return base + curve + milestone
+    raw = base + curve + milestone
+    scale = max(0, int(cfg["level_bonus_scale_percent"]))
+    return (raw * scale) // 100
 
 
 def format_minutes_hm(minutes: int) -> str:
