@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from telegram.ext import Application
 
-from tg_time_logger.commands_core import register_core_handlers
+from tg_time_logger.commands_core import register_core_handlers, register_unknown_handler
 from tg_time_logger.commands_quests import register_quest_handlers
 from tg_time_logger.commands_shop import register_shop_handlers
 from tg_time_logger.config import Settings
@@ -17,5 +17,6 @@ def build_application(settings: Settings, db: Database) -> Application:
     register_core_handlers(app)
     register_quest_handlers(app)
     register_shop_handlers(app)
+    register_unknown_handler(app)
 
     return app

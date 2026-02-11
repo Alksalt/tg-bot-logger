@@ -736,5 +736,9 @@ def register_core_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("rules", cmd_rules))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_form))
-    # Keep unknown-command fallback in a late group so real command handlers run first.
-    app.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command), group=100)
+
+
+def register_unknown_handler(app: Application) -> None:
+    # Register this after all command modules, in the default group, so it only
+    # handles truly unknown commands.
+    app.add_handler(MessageHandler(filters.COMMAND, handle_unknown_command))
