@@ -12,6 +12,7 @@ from tg_time_logger.db import Database
 from tg_time_logger.gamification import format_minutes_hm, spin_wheel
 from tg_time_logger.llm_messages import LlmContext, weekly_summary_message
 from tg_time_logger.llm_router import LlmRoute
+from tg_time_logger.notion_backup import run_notion_backup_job
 from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests, evaluate_quest_progress
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
@@ -315,6 +316,18 @@ async def run_check_quests(db: Database, settings: Settings) -> None:
             )
 
 
+def run_notion_backup(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("notion_backup"):
+        logger.info("job disabled: notion_backup")
+        return
+    if not db.is_feature_enabled("notion_backup"):
+        logger.info("feature disabled: notion_backup")
+        return
+    now = now_local(settings.tz)
+    records = run_notion_backup_job(db, settings, now)
+    logger.info("notion backup scaffold completed: users=%s", len(records))
+
+
 def run_job(job_name: str, db: Database, settings: Settings) -> None:
     if not db.is_job_enabled(job_name):
         logger.info("job disabled: %s", job_name)
@@ -327,5 +340,10 @@ def run_job(job_name: str, db: Database, settings: Settings) -> None:
         asyncio.run(run_midweek(db, settings))
     elif job_name == "check_quests":
         asyncio.run(run_check_quests(db, settings))
+    elif job_name == "notion_backup":
+        run_notion_backup(db, settings)
     else:
-        raise SystemExit(f"Unknown job '{job_name}'. Expected one of: sunday_summary, reminders, midweek, check_quests")
+        raise SystemExit(
+            "Unknown job "
+            f"'{job_name}'. Expected one of: sunday_summary, reminders, midweek, check_quests, notion_backup"
+        )

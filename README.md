@@ -33,6 +33,9 @@ GOOGLE_API_KEY=<key>
 BRAVE_SEARCH_API_KEY=<key>
 TAVILY_API_KEY=<key>
 SERPER_API_KEY=<key>
+NOTION_API_KEY=<key>
+NOTION_DATABASE_ID=<database_id>
+NOTION_BACKUP_DIR=./data/notion_backups
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-5-mini
 LLM_ROUTER_CONFIG=./llm_router.yaml
@@ -43,7 +46,7 @@ AGENT_MODELS_PATH=./agents/models.yaml
 AGENT_DIRECTIVE_PATH=./agents/directives/llm_assistant.md
 ```
 
-LLM model/provider defaults are read from `/Users/alt/Library/CloudStorage/OneDrive-Personal/automations/tg-time-logger/llm_router.yaml`.
+LLM model/provider defaults are read from `./llm_router.yaml`.
 Default route is `openai:gpt-5-mini`.
 
 ## Run
@@ -61,6 +64,7 @@ uv run python admin.py
 Open:
 - `http://127.0.0.1:8080/?token=<ADMIN_PANEL_TOKEN>`
 - If `ADMIN_PANEL_TOKEN` is empty, panel is open without auth (not recommended).
+- Admin now shows `Search Provider Health` with request/success/fail/cache/rate-limit counters.
 
 ## Jobs
 
@@ -69,6 +73,7 @@ uv run python jobs.py sunday_summary
 uv run python jobs.py reminders
 uv run python jobs.py midweek
 uv run python jobs.py check_quests
+uv run python jobs.py notion_backup
 ```
 
 ## Commands
@@ -86,7 +91,10 @@ Core:
 - `/rules clear`
 - `/llm <question>`
 - `/llm tier <free|open_source_cheap|top_tier> <question>`
+- `/llm models`
 - `/search <query>`
+- `/lang`
+- `/lang <en|uk>`
 - `/start [study|build|training|job|spend] [note]`
 - `/stop`
 
@@ -102,6 +110,9 @@ Quests/shop/savings:
 - `/quests history`
 - `/shop`
 - `/shop add <emoji> "name" <cost_minutes_or_duration> [nok_value]`
+- `/shop add <emoji> "name" <nok_value>nok`
+- `/shop price <emoji> "name" <search query>`
+- `/shop price <emoji> "name" <search query> --add` (confirm via button)
 - `/shop remove <id>`
 - `/shop budget <minutes|off>`
 - `/redeem <item_id|item_name>`
@@ -117,6 +128,23 @@ Savings behavior:
 - Save fund is locked from normal fun usage.
 - Shop redemption spends from save fund first, then from remaining fun.
 - If a redemption is fully covered by save fund, remaining fun does not decrease.
+
+Price conversion:
+- Default: `1 NOK = 3 fun min` (tunable via admin key `economy.nok_to_fun_minutes`).
+- `/shop price ...` uses web search and suggests a command with converted cost.
+- `/shop price ... --add` creates a pending add; press **Confirm add** button to save item.
+
+Notion backup:
+- `uv run python jobs.py notion_backup` writes per-user JSON snapshots to `NOTION_BACKUP_DIR`.
+- If `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set, it also writes a page to Notion.
+- The Notion database must have at least one **Title** property.
+
+Cron example (daily backup):
+
+```cron
+# Every day at 02:10 (server local time; set server TZ=Europe/Oslo)
+10 2 * * * cd /path/to/tg-time-logger && uv run python jobs.py notion_backup >> logs/notion_backup.log 2>&1
+```
 
 Duration formats: `90m`, `1.5h`, `1h20m`, `45`
 
@@ -142,6 +170,9 @@ This v2 upgrade adds:
 - V3 `agents/` runtime scaffold with directive/execution/orchestration split
 - tiered model policy via `agents/models.yaml`
 - web search tool (Brave/Tavily/Serper fallback) with cache + dedupe
+- user language preference (`en`/`uk`) with `/lang`
+- shop NOK conversion tuning (`economy.nok_to_fun_minutes`)
+- notion backup scaffold job + tool
 
 ## V3 Agent Layout
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-from tg_time_logger.commands_shared import get_settings, touch_user
+from tg_time_logger.commands_shared import get_settings, get_user_language, touch_user
 from tg_time_logger.db import Database
+from tg_time_logger.i18n import localize
 from tg_time_logger.llm_router import LlmRoute
 from tg_time_logger.quests import ensure_weekly_quests, evaluate_quest_progress
 from tg_time_logger.time_utils import week_range_for
@@ -20,17 +21,18 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id, _, now = touch_user(update, context)
     db = _db(context)
     settings = get_settings(context)
+    lang = get_user_language(context, user_id)
     if not db.is_feature_enabled("quests"):
-        await update.effective_message.reply_text("Quests are currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Quests are currently disabled by admin.", "Квести зараз вимкнені адміністратором."))
         return
 
     if context.args and context.args[0].lower() == "history":
         week = week_range_for(now)
         history = db.list_quest_history(user_id, week.start, week.end)
         if not history:
-            await update.effective_message.reply_text("No quest history this week.")
+            await update.effective_message.reply_text(localize(lang, "No quest history this week.", "Цього тижня історії квестів немає."))
             return
-        lines = ["Quest history:"]
+        lines = [localize(lang, "Quest history:", "Історія квестів:")]
         for q in history:
             lines.append(f"- [{q.status}] {q.title} (+{q.reward_fun_minutes}m)")
         await update.effective_message.reply_text("\n".join(lines))
@@ -49,10 +51,10 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
     active = db.list_active_quests(user_id, now)
     if not active:
-        await update.effective_message.reply_text("No active quests.")
+        await update.effective_message.reply_text(localize(lang, "No active quests.", "Немає активних квестів."))
         return
 
-    lines = ["⚔️ Active quests:"]
+    lines = [localize(lang, "⚔️ Active quests:", "⚔️ Активні квести:")]
     for q in active:
         p = evaluate_quest_progress(db, user_id, q, now)
         lines.append(f"- {q.title} ({q.difficulty}): {p.current}/{p.target} {p.unit} | +{q.reward_fun_minutes}m")

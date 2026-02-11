@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from tg_time_logger.agents.tools.base import Tool, ToolContext, ToolResult
+from tg_time_logger.agents.tools.notion_mcp import NotionMcpTool
 from tg_time_logger.agents.tools.search import WebSearchTool
 
 
@@ -43,7 +44,7 @@ class ToolRegistry:
 def build_default_registry() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(WebSearchTool())
-    reg.register(StubTool(name="notion_mcp", description="Future Notion MCP connector."))
+    reg.register(NotionMcpTool())
     reg.register(StubTool(name="mail_api", description="Future mail integration tool."))
     reg.register(StubTool(name="maps_api", description="Future maps/geocoding integration tool."))
     reg.register(StubTool(name="custom_http_api", description="Future generic app API connector tool."))

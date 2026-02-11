@@ -26,6 +26,9 @@ class Settings:
     serper_api_key: str | None
     agent_models_path: Path
     agent_directive_path: Path
+    notion_api_key: str | None
+    notion_database_id: str | None
+    notion_backup_dir: Path
 
 
 def _load_env_file(path: Path) -> None:
@@ -90,4 +93,7 @@ def load_settings() -> Settings:
         serper_api_key=os.getenv("SERPER_API_KEY"),
         agent_models_path=Path(os.getenv("AGENT_MODELS_PATH", "./agents/models.yaml")),
         agent_directive_path=Path(os.getenv("AGENT_DIRECTIVE_PATH", "./agents/directives/llm_assistant.md")),
+        notion_api_key=os.getenv("NOTION_API_KEY"),
+        notion_database_id=os.getenv("NOTION_DATABASE_ID"),
+        notion_backup_dir=Path(os.getenv("NOTION_BACKUP_DIR", "./data/notion_backups")),
     )

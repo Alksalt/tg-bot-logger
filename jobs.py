@@ -16,7 +16,7 @@ from tg_time_logger.logging_setup import setup_logging
 
 def main() -> None:
     if len(sys.argv) != 2:
-        raise SystemExit("Usage: python jobs.py <sunday_summary|reminders|midweek|check_quests>")
+        raise SystemExit("Usage: python jobs.py <sunday_summary|reminders|midweek|check_quests|notion_backup>")
 
     setup_logging()
     settings = load_settings()

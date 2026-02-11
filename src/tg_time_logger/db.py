@@ -43,6 +43,7 @@ class UserSettings:
     shop_budget_minutes: int | None
     auto_save_minutes: int
     sunday_fund_percent: int
+    language_code: str
 
 
 @dataclass(frozen=True)
@@ -151,14 +152,17 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "feature.economy_enabled": True,
     "feature.agent_enabled": True,
     "feature.search_enabled": True,
+    "feature.notion_backup_enabled": True,
     "job.sunday_summary_enabled": True,
     "job.reminders_enabled": True,
     "job.midweek_enabled": True,
     "job.check_quests_enabled": True,
+    "job.notion_backup_enabled": True,
     "economy.fun_rate.study": 15,
     "economy.fun_rate.build": 20,
     "economy.fun_rate.training": 20,
     "economy.fun_rate.job": 4,
+    "economy.nok_to_fun_minutes": 3,
     "economy.milestone_block_minutes": 600,
     "economy.milestone_bonus_minutes": 180,
     "economy.xp_level2_base": 300,
@@ -177,6 +181,7 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "search.brave_enabled": True,
     "search.tavily_enabled": True,
     "search.serper_enabled": True,
+    "i18n.default_language": "en",
 }
 
 JOB_CONFIG_KEYS = {
@@ -184,6 +189,7 @@ JOB_CONFIG_KEYS = {
     "reminders": "job.reminders_enabled",
     "midweek": "job.midweek_enabled",
     "check_quests": "job.check_quests_enabled",
+    "notion_backup": "job.notion_backup_enabled",
 }
 
 
@@ -487,6 +493,24 @@ class Database:
                         PRIMARY KEY(tool_name, cache_key)
                     );
                 """,
+                16: """
+                    ALTER TABLE user_settings
+                    ADD COLUMN language_code TEXT NOT NULL DEFAULT 'en';
+                """,
+                17: """
+                    CREATE TABLE IF NOT EXISTS search_provider_stats (
+                        provider TEXT PRIMARY KEY,
+                        request_count INTEGER NOT NULL DEFAULT 0,
+                        success_count INTEGER NOT NULL DEFAULT 0,
+                        fail_count INTEGER NOT NULL DEFAULT 0,
+                        cache_hit_count INTEGER NOT NULL DEFAULT 0,
+                        rate_limit_count INTEGER NOT NULL DEFAULT 0,
+                        last_status_code INTEGER,
+                        last_error TEXT,
+                        last_request_at TEXT,
+                        updated_at TEXT NOT NULL
+                    );
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -557,7 +581,8 @@ class Database:
                 """
                 SELECT p.user_id, p.chat_id, p.last_seen_at,
                        s.reminders_enabled, s.daily_goal_minutes, s.quiet_hours,
-                       s.shop_budget_minutes, s.auto_save_minutes, s.sunday_fund_percent
+                       s.shop_budget_minutes, s.auto_save_minutes, s.sunday_fund_percent,
+                       s.language_code
                 FROM user_profiles p
                 LEFT JOIN user_settings s ON s.user_id = p.user_id
                 """
@@ -570,7 +595,7 @@ class Database:
             row = conn.execute(
                 """
                 SELECT user_id, reminders_enabled, daily_goal_minutes, quiet_hours,
-                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent
+                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent, language_code
                 FROM user_settings WHERE user_id = ?
                 """,
                 (user_id,),
@@ -584,6 +609,7 @@ class Database:
             shop_budget_minutes=row["shop_budget_minutes"],
             auto_save_minutes=int(row["auto_save_minutes"] or 0),
             sunday_fund_percent=int(row["sunday_fund_percent"] or 0),
+            language_code=str(row["language_code"] or "en"),
         )
 
     def update_reminders_enabled(self, user_id: int, enabled: bool) -> None:
@@ -625,6 +651,21 @@ class Database:
             conn.execute("INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)", (user_id,))
             conn.execute(
                 "UPDATE user_settings SET sunday_fund_percent = ? WHERE user_id = ?",
+                (normalized, user_id),
+            )
+
+    def update_language_code(self, user_id: int, language_code: str) -> None:
+        normalized = (language_code or "en").strip().lower()
+        if normalized.startswith("uk"):
+            normalized = "uk"
+        elif normalized.startswith("en"):
+            normalized = "en"
+        else:
+            normalized = "en"
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)", (user_id,))
+            conn.execute(
+                "UPDATE user_settings SET language_code = ? WHERE user_id = ?",
                 (normalized, user_id),
             )
 
@@ -864,6 +905,64 @@ class Database:
                 ),
             )
 
+    def record_search_provider_event(
+        self,
+        *,
+        provider: str,
+        now: datetime,
+        success: bool,
+        cached: bool,
+        rate_limited: bool,
+        status_code: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        p = provider.strip().lower()
+        if not p:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO search_provider_stats(
+                    provider, request_count, success_count, fail_count, cache_hit_count,
+                    rate_limit_count, last_status_code, last_error, last_request_at, updated_at
+                )
+                VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    request_count = request_count + 1,
+                    success_count = success_count + excluded.success_count,
+                    fail_count = fail_count + excluded.fail_count,
+                    cache_hit_count = cache_hit_count + excluded.cache_hit_count,
+                    rate_limit_count = rate_limit_count + excluded.rate_limit_count,
+                    last_status_code = excluded.last_status_code,
+                    last_error = excluded.last_error,
+                    last_request_at = excluded.last_request_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    p,
+                    1 if success else 0,
+                    0 if success else 1,
+                    1 if cached else 0,
+                    1 if rate_limited else 0,
+                    status_code,
+                    error,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+            )
+
+    def list_search_provider_stats(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT provider, request_count, success_count, fail_count, cache_hit_count,
+                       rate_limit_count, last_status_code, last_error, last_request_at, updated_at
+                FROM search_provider_stats
+                ORDER BY provider ASC
+                """
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def add_entry(
         self,
         user_id: int,
@@ -946,6 +1045,21 @@ class Database:
             updated = conn.execute("SELECT * FROM entries WHERE id = ?", (row["id"],)).fetchone()
         assert updated is not None
         return _row_to_entry(updated)
+
+    def list_recent_entries(self, user_id: int, limit: int = 200) -> list[Entry]:
+        capped = max(1, min(int(limit), 1000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM entries
+                WHERE user_id = ? AND deleted_at IS NULL
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, capped),
+            ).fetchall()
+        return [_row_to_entry(r) for r in rows]
 
     def sum_minutes(
         self,

@@ -107,6 +107,11 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
   </div>
 
   <div class="card">
+    <h2>Search Provider Health</h2>
+    <pre id="searchStats"></pre>
+  </div>
+
+  <div class="card">
     <div class="row">
       <button id="saveBtn">Save Config</button>
       <button id="snapshotBtn" class="secondary">Create Snapshot</button>
@@ -129,16 +134,18 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
   <script>
     const featureKeys = [
       "feature.llm_enabled", "feature.quests_enabled", "feature.reminders_enabled",
-      "feature.shop_enabled", "feature.savings_enabled", "feature.economy_enabled"
+      "feature.shop_enabled", "feature.savings_enabled", "feature.economy_enabled",
+      "feature.notion_backup_enabled"
     ];
     const jobKeys = [
       "job.sunday_summary_enabled", "job.reminders_enabled",
-      "job.midweek_enabled", "job.check_quests_enabled"
+      "job.midweek_enabled", "job.check_quests_enabled", "job.notion_backup_enabled"
     ];
     const economyKeys = [
       "economy.fun_rate.study", "economy.fun_rate.build", "economy.fun_rate.training", "economy.fun_rate.job",
       "economy.milestone_block_minutes", "economy.milestone_bonus_minutes",
-      "economy.xp_level2_base", "economy.xp_linear", "economy.xp_quadratic", "economy.level_bonus_scale_percent"
+      "economy.xp_level2_base", "economy.xp_linear", "economy.xp_quadratic", "economy.level_bonus_scale_percent",
+      "economy.nok_to_fun_minutes"
     ];
     const agentBoolKeys = ["feature.agent_enabled", "agent.reasoning_enabled"];
     const agentIntKeys = [
@@ -148,7 +155,7 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       "agent.max_step_output_tokens",
       "agent.max_total_tokens"
     ];
-    const agentStringKeys = ["agent.default_tier"];
+    const agentStringKeys = ["agent.default_tier", "i18n.default_language"];
     const searchBoolKeys = [
       "feature.search_enabled",
       "search.brave_enabled",
@@ -202,6 +209,10 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       const auditRes = await fetch(withToken("/api/audit?limit=50"));
       const audit = await auditRes.json();
       document.getElementById("audit").textContent = JSON.stringify(audit.rows || [], null, 2);
+
+      const searchStatsRes = await fetch(withToken("/api/search_stats"));
+      const searchStats = await searchStatsRes.json();
+      document.getElementById("searchStats").textContent = JSON.stringify(searchStats.rows || [], null, 2);
     }
 
     function collectUpdates() {
@@ -312,6 +323,11 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     async def api_audit(request: Request, limit: int = 100) -> dict[str, Any]:
         _require_auth(request, admin_token)
         return {"rows": db.list_admin_audit(limit=limit)}
+
+    @app.get("/api/search_stats")
+    async def api_search_stats(request: Request) -> dict[str, Any]:
+        _require_auth(request, admin_token)
+        return {"rows": db.list_search_provider_stats()}
 
     return app
 

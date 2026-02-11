@@ -10,10 +10,12 @@ Tool manifest for the V3 agent runtime. Keep this short to reduce token usage in
 - Providers with fallback: Brave -> Tavily -> Serper.
 - Behavior: cached + deduped query responses (SQLite cache).
 
-## Scaffolded (not implemented yet)
-
 1. `notion_mcp`
-- Future connector for Notion backup and retrieval via MCP-style integration.
+- Purpose: create local backup snapshots that are ready for Notion sync.
+- Inputs: `mode="backup_now"`, optional `user_id`.
+- Behavior: writes JSON snapshot under `NOTION_BACKUP_DIR`; remote sync remains scaffold-only.
+
+## Scaffolded (not implemented yet)
 
 2. `mail_api`
 - Future mail automation tool (draft/send/status).

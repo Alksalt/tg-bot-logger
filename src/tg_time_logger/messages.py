@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from tg_time_logger.db import Entry
 from tg_time_logger.gamification import format_minutes_hm
+from tg_time_logger.i18n import localize
 from tg_time_logger.service import StatusView
 
 NEGATIVE_WARNING = "⚠️ Limit reached. Fun remaining is negative. Log productive time to earn more."
 
 CATEGORY_LABELS = {
-    "study": "📚 Study",
-    "build": "🔨 Build",
-    "training": "🏋️ Training",
-    "job": "💼 Job",
+    "en": {
+        "study": "📚 Study",
+        "build": "🔨 Build",
+        "training": "🏋️ Training",
+        "job": "💼 Job",
+    },
+    "uk": {
+        "study": "📚 Навчання",
+        "build": "🔨 Розробка",
+        "training": "🏋️ Тренування",
+        "job": "💼 Робота",
+    },
 }
 
 
@@ -19,80 +28,143 @@ def _bar(ratio: float, width: int = 20) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def _fun_remaining_lines(value: int) -> list[str]:
+def _fun_remaining_lines(value: int, lang: str = "en") -> list[str]:
     if value < 0:
-        return [f"Remaining: {format_minutes_hm(-1)}", NEGATIVE_WARNING]
-    return [f"Remaining: {format_minutes_hm(value)}"]
+        return [
+            localize(lang, "Remaining: {mins}", "Залишок: {mins}", mins=format_minutes_hm(-1)),
+            localize(lang, NEGATIVE_WARNING, "⚠️ Ліміт досягнуто. Залишок відпочинку від'ємний. Додай продуктивний час, щоб заробити більше."),
+        ]
+    return [localize(lang, "Remaining: {mins}", "Залишок: {mins}", mins=format_minutes_hm(value))]
 
 
-def status_message(view: StatusView, username: str | None = None) -> str:
-    header = f"📊 Status — @{username}" if username else "📊 Status"
+def status_message(view: StatusView, username: str | None = None, lang: str = "en") -> str:
+    header = (
+        localize(lang, "📊 Status — @{username}", "📊 Статус — @{username}", username=username)
+        if username
+        else localize(lang, "📊 Status", "📊 Статус")
+    )
     lines = [
         header,
         "",
-        f"⚡ Level {view.level} — {view.title}",
-        f"📊 XP: {view.xp_current_level:,} / {view.xp_next_level:,} (to Level {view.level + 1})",
+        localize(lang, "⚡ Level {level} — {title}", "⚡ Рівень {level} — {title}", level=view.level, title=view.title),
+        localize(
+            lang,
+            "📊 XP: {current:,} / {next:,} (to Level {to_level})",
+            "📊 XP: {current:,} / {next:,} (до Рівня {to_level})",
+            current=view.xp_current_level,
+            next=view.xp_next_level,
+            to_level=view.level + 1,
+        ),
         f"{_bar(view.xp_progress_ratio)} {view.xp_progress_ratio * 100:.1f}%",
-        f"🔥 Streak: {view.streak_current} days ({view.streak_multiplier:.1f}x XP) | Best: {view.streak_longest}",
+        localize(
+            lang,
+            "🔥 Streak: {days} days ({mult:.1f}x XP) | Best: {best}",
+            "🔥 Серія: {days} днів ({mult:.1f}x XP) | Рекорд: {best}",
+            days=view.streak_current,
+            mult=view.streak_multiplier,
+            best=view.streak_longest,
+        ),
         "",
-        "📅 This week (Mon–Sun):",
+        localize(lang, "📅 This week (Mon–Sun):", "📅 Цей тиждень (Пн–Нд):"),
     ]
 
+    labels = CATEGORY_LABELS.get(lang, CATEGORY_LABELS["en"])
     for key in ("study", "build", "training", "job"):
         minutes = view.week_categories.get(key, 0)
         fun = (minutes * (15 if key == "study" else 4 if key == "job" else 20)) // 60
-        lines.append(f"  {CATEGORY_LABELS[key]}: {format_minutes_hm(minutes)} → +{fun} fun")
+        lines.append(
+            localize(
+                lang,
+                "  {label}: {mins} → +{fun} fun",
+                "  {label}: {mins} → +{fun} fun",
+                label=labels[key],
+                mins=format_minutes_hm(minutes),
+                fun=fun,
+            )
+        )
 
     lines.extend(
         [
-            f"  📊 Total: {format_minutes_hm(view.week.productive_minutes)} | XP: +{view.xp_week}",
+            localize(
+                lang,
+                "  📊 Total: {total} | XP: +{xp}",
+                "  📊 Всього: {total} | XP: +{xp}",
+                total=format_minutes_hm(view.week.productive_minutes),
+                xp=view.xp_week,
+            ),
             (
-                f"  🎯 Plan: {view.week_plan_done_minutes}m/{view.week_plan_target_minutes}m this week"
+                localize(
+                    lang,
+                    "  🎯 Plan: {done}m/{target}m this week",
+                    "  🎯 План: {done}m/{target}m цього тижня",
+                    done=view.week_plan_done_minutes,
+                    target=view.week_plan_target_minutes,
+                )
                 if view.week_plan_target_minutes > 0
-                else "  🎯 Plan: not set (/plan set <duration>)"
+                else localize(lang, "  🎯 Plan: not set (/plan set <duration>)", "  🎯 План: не встановлено (/plan set <duration>)")
             ),
             "",
-            "💰 Fun Economy:",
+            localize(lang, "💰 Fun Economy:", "💰 Економіка відпочинку:"),
             (
-                f"  Earned: {view.economy.base_fun_minutes} (base) + "
-                f"{view.economy.milestone_bonus_minutes} (10h milestone) + "
-                f"{view.economy.level_bonus_minutes} (lvl bonus) + "
-                f"{view.economy.quest_bonus_minutes} (quest) + "
-                f"{view.economy.wheel_bonus_minutes} (wheel)"
+                localize(
+                    lang,
+                    "  Earned: {base} (base) + {milestone} (10h milestone) + {lvl} (lvl bonus) + {quest} (quest) + {wheel} (wheel)",
+                    "  Зароблено: {base} (база) + {milestone} (рубіж 10г) + {lvl} (бонус рівня) + {quest} (квест) + {wheel} (колесо)",
+                    base=view.economy.base_fun_minutes,
+                    milestone=view.economy.milestone_bonus_minutes,
+                    lvl=view.economy.level_bonus_minutes,
+                    quest=view.economy.quest_bonus_minutes,
+                    wheel=view.economy.wheel_bonus_minutes,
+                )
             ),
-            f"  Spent: -{view.economy.spent_fun_minutes} min",
-            f"  Saved: -{view.economy.saved_fun_minutes} min",
-            *_fun_remaining_lines(view.economy.remaining_fun_minutes),
+            localize(lang, "  Spent: -{mins} min", "  Витрачено: -{mins} хв", mins=view.economy.spent_fun_minutes),
+            localize(lang, "  Saved: -{mins} min", "  Відкладено: -{mins} хв", mins=view.economy.saved_fun_minutes),
+            *_fun_remaining_lines(view.economy.remaining_fun_minutes, lang),
             "",
-            f"⚔️ Active Quests: {view.active_quests}",
+            localize(lang, "⚔️ Active Quests: {count}", "⚔️ Активні квести: {count}", count=view.active_quests),
         ]
     )
     return "\n".join(lines)
 
 
-def week_message(view: StatusView) -> str:
+def week_message(view: StatusView, lang: str = "en") -> str:
     lines = [
-        "📅 Week",
-        f"Productive: {format_minutes_hm(view.week.productive_minutes)}",
-        f"Spent: {format_minutes_hm(view.week.spent_minutes)}",
+        localize(lang, "📅 Week", "📅 Тиждень"),
+        localize(lang, "Productive: {mins}", "Продуктивно: {mins}", mins=format_minutes_hm(view.week.productive_minutes)),
+        localize(lang, "Spent: {mins}", "Витрачено: {mins}", mins=format_minutes_hm(view.week.spent_minutes)),
         (
-            f"Plan: {view.week_plan_done_minutes}m/{view.week_plan_target_minutes}m "
-            f"(remaining {view.week_plan_remaining_minutes}m)"
+            localize(
+                lang,
+                "Plan: {done}m/{target}m (remaining {remain}m)",
+                "План: {done}m/{target}m (залишилось {remain}m)",
+                done=view.week_plan_done_minutes,
+                target=view.week_plan_target_minutes,
+                remain=view.week_plan_remaining_minutes,
+            )
             if view.week_plan_target_minutes > 0
-            else "Plan: not set"
+            else localize(lang, "Plan: not set", "План: не встановлено")
         ),
-        f"XP this week: {view.xp_week}",
-        f"Deep work sessions (90m+): {view.deep_sessions_week}",
-        *_fun_remaining_lines(view.economy.remaining_fun_minutes),
+        localize(lang, "XP this week: {xp}", "XP за тиждень: {xp}", xp=view.xp_week),
+        localize(
+            lang,
+            "Deep work sessions (90m+): {count}",
+            "Сесії deep work (90хв+): {count}",
+            count=view.deep_sessions_week,
+        ),
+        *_fun_remaining_lines(view.economy.remaining_fun_minutes, lang),
     ]
     return "\n".join(lines)
 
 
-def entry_removed_message(entry: Entry) -> str:
+def entry_removed_message(entry: Entry, lang: str = "en") -> str:
     note = f" | note: {entry.note}" if entry.note else ""
     kind = f"{entry.kind} ({entry.category})" if entry.kind == "productive" else entry.kind
-    return (
-        f"Undid entry: {kind} {format_minutes_hm(entry.minutes)}"
-        f" at {entry.created_at.strftime('%Y-%m-%d %H:%M')}"
-        f"{note}"
+    return localize(
+        lang,
+        "Undid entry: {kind} {minutes} at {at}{note}",
+        "Скасовано запис: {kind} {minutes} о {at}{note}",
+        kind=kind,
+        minutes=format_minutes_hm(entry.minutes),
+        at=entry.created_at.strftime("%Y-%m-%d %H:%M"),
+        note=note,
     )

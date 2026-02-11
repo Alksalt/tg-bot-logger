@@ -106,7 +106,15 @@ class WebSearchTool(Tool):
         cached = ctx.db.get_tool_cache(self.name, cache_key, ctx.now)
         if cached:
             content = str(cached.get("content", "")).strip()
-            return ToolResult(ok=True, content=content, metadata={"cached": True, "provider": cached.get("provider")})
+            provider = str(cached.get("provider") or "cache")
+            ctx.db.record_search_provider_event(
+                provider=provider,
+                now=ctx.now,
+                success=True,
+                cached=True,
+                rate_limited=False,
+            )
+            return ToolResult(ok=True, content=content, metadata={"cached": True, "provider": provider})
 
         provider_order_raw = str(ctx.config.get("search.provider_order", "brave,tavily,serper"))
         provider_order = [p.strip().lower() for p in provider_order_raw.split(",") if p.strip()]
@@ -135,9 +143,46 @@ class WebSearchTool(Tool):
                     continue
                 if results:
                     selected_provider = provider
+                    ctx.db.record_search_provider_event(
+                        provider=provider,
+                        now=ctx.now,
+                        success=True,
+                        cached=False,
+                        rate_limited=False,
+                    )
                     break
+                errors[provider] = "No results"
+                ctx.db.record_search_provider_event(
+                    provider=provider,
+                    now=ctx.now,
+                    success=False,
+                    cached=False,
+                    rate_limited=False,
+                    error="No results",
+                )
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                msg = f"HTTP {status}" if status else str(exc)
+                errors[provider] = msg
+                ctx.db.record_search_provider_event(
+                    provider=provider,
+                    now=ctx.now,
+                    success=False,
+                    cached=False,
+                    rate_limited=(status == 429),
+                    status_code=status,
+                    error=msg,
+                )
             except Exception as exc:
                 errors[provider] = str(exc)
+                ctx.db.record_search_provider_event(
+                    provider=provider,
+                    now=ctx.now,
+                    success=False,
+                    cached=False,
+                    rate_limited=False,
+                    error=str(exc),
+                )
                 continue
 
         deduped: list[SearchItem] = []

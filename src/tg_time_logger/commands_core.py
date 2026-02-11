@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from tg_time_logger.agents.execution.config import load_model_config
 from tg_time_logger.agents.orchestration.runner import run_llm_agent, run_search_tool
 from telegram import Update
 from telegram.constants import ChatAction
@@ -12,11 +13,13 @@ from tg_time_logger.commands_shared import (
     build_keyboard,
     get_db,
     get_settings,
+    get_user_language,
     send_level_ups,
     touch_user,
 )
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES
+from tg_time_logger.i18n import localize, normalize_language_code, t
 from tg_time_logger.llm_parser import parse_free_form_with_llm
 from tg_time_logger.llm_router import LlmRoute
 from tg_time_logger.messages import entry_removed_message, status_message, week_message
@@ -34,7 +37,7 @@ HELP_TOPICS: dict[str, str] = {
         "/log, /spend, /status, /week, /undo\n"
         "/plan, /start, /stop\n"
         "/quests, /shop, /redeem, /save\n"
-        "/rules, /llm, /search, /reminders, /quiet_hours, /freeze\n"
+        "/rules, /llm, /search, /lang, /reminders, /quiet_hours, /freeze\n"
         "/help [command]\n\n"
         "Examples:\n"
         "/help log\n"
@@ -97,10 +100,16 @@ HELP_TOPICS: dict[str, str] = {
     "shop": (
         "/shop\n"
         "/shop add <emoji> \"name\" <cost_duration_or_minutes> [nok_value]\n"
+        "/shop add <emoji> \"name\" <nok_value>nok\n"
+        "/shop price <emoji> \"name\" <search_query>\n"
+        "/shop price <emoji> \"name\" <search_query> --add\n"
         "/shop remove <item_id>\n"
         "/shop budget <minutes|off>\n\n"
         "Examples:\n"
         "- /shop add ⌚ \"Apple Watch\" 15000m\n"
+        "- /shop add ⌚ \"Apple Watch\" 4990nok\n"
+        "- /shop price ⌚ \"Apple Watch\" apple watch price norway\n"
+        "- /shop price ⌚ \"Apple Watch\" apple watch price norway --add\n"
         "- /shop add 🎧 \"AirPods\" 4000 2490\n"
         "- /shop remove 12"
     ),
@@ -130,6 +139,7 @@ HELP_TOPICS: dict[str, str] = {
     "llm": (
         "/llm <question>\n"
         "/llm tier <free|open_source_cheap|top_tier> <question>\n"
+        "/llm models\n"
         "Ask analytics questions based on your stats.\n"
         "Uses V3 agent loop with tools and tiered model routing.\n"
         "Requires OPENROUTER_API_KEY.\n\n"
@@ -142,6 +152,11 @@ HELP_TOPICS: dict[str, str] = {
         "Runs web search tool (Brave -> Tavily -> Serper fallback) with cache + dedupe.\n\n"
         "Example:\n"
         "- /search apple watch ultra 2 price norway"
+    ),
+    "lang": (
+        "/lang\n"
+        "/lang <en|uk>\n"
+        "Shows or sets your preferred bot language (English/Ukrainian)."
     ),
     "reminders": (
         "/reminders on\n"
@@ -168,9 +183,10 @@ HELP_TOPICS: dict[str, str] = {
 async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
 
     if len(context.args) < 1:
-        await update.effective_message.reply_text("Usage: /log <duration> [study|build|training|job] [note]")
+        await update.effective_message.reply_text(localize(lang, "Usage: /log <duration> [study|build|training|job] [note]", "Використання: /log <duration> [study|build|training|job] [note]"))
         return
 
     try:
@@ -203,7 +219,7 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Logged {minutes}m {outcome.entry.category}.\n"
             f"⚡ XP earned: {outcome.xp_earned} ({outcome.streak_mult:.1f}x streak)\n"
             f"💰 Fun earned: +{outcome.entry.fun_earned}m\n\n"
-            f"{status_message(view, username=update.effective_user.username)}"
+            f"{status_message(view, username=update.effective_user.username, lang=lang)}"
         ),
         reply_markup=build_keyboard(),
     )
@@ -221,9 +237,10 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_spend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
 
     if len(context.args) < 1:
-        await update.effective_message.reply_text("Usage: /spend <duration> [note]")
+        await update.effective_message.reply_text(localize(lang, "Usage: /spend <duration> [note]", "Використання: /spend <duration> [note]"))
         return
 
     try:
@@ -244,16 +261,17 @@ async def cmd_spend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     view = compute_status(db, user_id, now)
     await update.effective_message.reply_text(
-        f"Logged spend {minutes}m.\n\n{status_message(view, username=update.effective_user.username)}",
+        f"{localize(lang, 'Logged spend {minutes}m.', 'Додано витрати {minutes}хв.', minutes=minutes)}\n\n{status_message(view, username=update.effective_user.username, lang=lang)}",
         reply_markup=build_keyboard(),
     )
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     view = compute_status(get_db(context), user_id, now)
     await update.effective_message.reply_text(
-        status_message(view, username=update.effective_user.username),
+        status_message(view, username=update.effective_user.username, lang=lang),
         reply_markup=build_keyboard(),
     )
 
@@ -261,12 +279,14 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     view = compute_status(db, user_id, now)
-    await update.effective_message.reply_text(week_message(view), reply_markup=build_keyboard())
+    await update.effective_message.reply_text(week_message(view, lang=lang), reply_markup=build_keyboard())
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    touch_user(update, context)
+    user_id, _, _ = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     if not context.args:
         await update.effective_message.reply_text(HELP_TOPICS["overview"])
         return
@@ -275,24 +295,42 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = HELP_TOPICS.get(topic)
     if not text:
         await update.effective_message.reply_text(
-            f"No detailed help for '{topic}'. Try /help to see all commands."
+            localize(lang, "No detailed help for '{topic}'. Try /help to see all commands.", "Немає детальної довідки для '{topic}'. Використай /help для списку команд.", topic=topic)
         )
         return
     await update.effective_message.reply_text(text)
 
 
+async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id, _, _ = touch_user(update, context)
+    db = get_db(context)
+    current = get_user_language(context, user_id)
+    if not context.args:
+        await update.effective_message.reply_text(t("lang_show", current, code=current))
+        return
+
+    raw_requested = context.args[0].strip().lower()
+    if not (raw_requested.startswith("en") or raw_requested.startswith("uk")):
+        await update.effective_message.reply_text(t("lang_usage", current))
+        return
+    requested = normalize_language_code(raw_requested, default=current)
+    db.update_language_code(user_id, requested)
+    await update.effective_message.reply_text(t("lang_set", requested, code=requested))
+
+
 async def cmd_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
 
     if not context.args:
         rules = db.list_user_rules(user_id)
         if not rules:
             await update.effective_message.reply_text(
-                "No personal rules yet. Add one with /rules add <text>."
+                localize(lang, "No personal rules yet. Add one with /rules add <text>.", "Поки немає правил. Додай: /rules add <text>")
             )
             return
-        lines = ["📘 Your rules:"]
+        lines = [localize(lang, "📘 Your rules:", "📘 Твої правила:")]
         for rule in rules:
             lines.append(f"{rule.id}. {rule.rule_text}")
         await update.effective_message.reply_text("\n".join(lines))
@@ -302,65 +340,73 @@ async def cmd_rules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if action == "add":
         text = " ".join(context.args[1:]).strip()
         if not text:
-            await update.effective_message.reply_text("Usage: /rules add <text>")
+            await update.effective_message.reply_text(localize(lang, "Usage: /rules add <text>", "Використання: /rules add <text>"))
             return
         rule = db.add_user_rule(user_id, text, now)
-        await update.effective_message.reply_text(f"Rule saved ({rule.id}).")
+        await update.effective_message.reply_text(localize(lang, "Rule saved ({id}).", "Правило збережено ({id}).", id=rule.id))
         return
 
     if action == "remove":
         if len(context.args) < 2 or not context.args[1].isdigit():
-            await update.effective_message.reply_text("Usage: /rules remove <id>")
+            await update.effective_message.reply_text(localize(lang, "Usage: /rules remove <id>", "Використання: /rules remove <id>"))
             return
         ok = db.remove_user_rule(user_id, int(context.args[1]))
-        await update.effective_message.reply_text("Rule removed." if ok else "Rule not found.")
+        await update.effective_message.reply_text(localize(lang, "Rule removed.", "Правило видалено.") if ok else localize(lang, "Rule not found.", "Правило не знайдено."))
         return
 
     if action == "clear":
         count = db.clear_user_rules(user_id)
-        await update.effective_message.reply_text(f"Removed {count} rule(s).")
+        await update.effective_message.reply_text(localize(lang, "Removed {count} rule(s).", "Видалено правил: {count}.", count=count))
         return
 
-    await update.effective_message.reply_text("Usage: /rules, /rules add, /rules remove, /rules clear")
+    await update.effective_message.reply_text(localize(lang, "Usage: /rules, /rules add, /rules remove, /rules clear", "Використання: /rules, /rules add, /rules remove, /rules clear"))
 
 
 async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     removed = get_db(context).undo_last_entry(user_id=user_id, deleted_at=now)
     if not removed:
-        await update.effective_message.reply_text("Nothing to undo")
+        await update.effective_message.reply_text(localize(lang, "Nothing to undo", "Нічого скасовувати"))
         return
-    await update.effective_message.reply_text(entry_removed_message(removed), reply_markup=build_keyboard())
+    await update.effective_message.reply_text(entry_removed_message(removed, lang=lang), reply_markup=build_keyboard())
 
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
 
     if not context.args:
-        await update.effective_message.reply_text("Usage: /plan set <duration> OR /plan show")
+        await update.effective_message.reply_text(localize(lang, "Usage: /plan set <duration> OR /plan show", "Використання: /plan set <duration> OR /plan show"))
         return
 
     action = context.args[0].lower()
     if action == "show":
         plan = db.get_plan_target(user_id, week_start_date(now))
         if not plan:
-            await update.effective_message.reply_text("No plan set for this week")
+            await update.effective_message.reply_text(localize(lang, "No plan set for this week", "План на цей тиждень не встановлено"))
             return
         done = db.sum_minutes(user_id, "productive", start=week_range_for(now).start, end=now)
         await update.effective_message.reply_text(
-            f"Plan this week: {plan.total_target_minutes}m total productive | done {done}m"
+            localize(
+                lang,
+                "Plan this week: {target}m total productive | done {done}m",
+                "План на тиждень: {target}хв продуктивно | виконано {done}хв",
+                target=plan.total_target_minutes,
+                done=done,
+            )
         )
         return
 
     if action != "set" or len(context.args) < 2:
-        await update.effective_message.reply_text("Usage: /plan set <duration>")
+        await update.effective_message.reply_text(localize(lang, "Usage: /plan set <duration>", "Використання: /plan set <duration>"))
         return
 
     try:
         target_minutes = parse_duration_to_minutes(context.args[1])
     except DurationParseError as exc:
-        await update.effective_message.reply_text(f"Plan parse error: {exc}")
+        await update.effective_message.reply_text(localize(lang, "Plan parse error: {err}", "Помилка розбору плану: {err}", err=exc))
         return
 
     db.set_plan_target(
@@ -369,42 +415,51 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         total_target_minutes=target_minutes,
         build_target_minutes=target_minutes,
     )
-    await update.effective_message.reply_text(f"Plan saved for week: {target_minutes}m total productive")
+    await update.effective_message.reply_text(localize(lang, "Plan saved for week: {target}m total productive", "План збережено: {target}хв продуктивно на тиждень", target=target_minutes))
 
 
 async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, _ = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     if not context.args:
-        await update.effective_message.reply_text("Usage: /reminders on|off")
+        await update.effective_message.reply_text(localize(lang, "Usage: /reminders on|off", "Використання: /reminders on|off"))
         return
 
     action = context.args[0].lower()
     if action not in {"on", "off"}:
-        await update.effective_message.reply_text("Usage: /reminders on|off")
+        await update.effective_message.reply_text(localize(lang, "Usage: /reminders on|off", "Використання: /reminders on|off"))
         return
 
     enabled = action == "on"
     get_db(context).update_reminders_enabled(user_id, enabled)
-    await update.effective_message.reply_text(f"Reminders {'enabled' if enabled else 'disabled'}")
+    await update.effective_message.reply_text(
+        localize(
+            lang,
+            "Reminders enabled" if enabled else "Reminders disabled",
+            "Нагадування увімкнено" if enabled else "Нагадування вимкнено",
+        )
+    )
 
 
 async def cmd_quiet_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, _ = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     if not context.args:
-        await update.effective_message.reply_text("Usage: /quiet_hours HH:MM-HH:MM")
+        await update.effective_message.reply_text(localize(lang, "Usage: /quiet_hours HH:MM-HH:MM", "Використання: /quiet_hours HH:MM-HH:MM"))
         return
 
     raw = context.args[0]
     if "-" not in raw or ":" not in raw:
-        await update.effective_message.reply_text("Invalid format. Example: /quiet_hours 22:00-08:00")
+        await update.effective_message.reply_text(localize(lang, "Invalid format. Example: /quiet_hours 22:00-08:00", "Невірний формат. Приклад: /quiet_hours 22:00-08:00"))
         return
 
     get_db(context).update_quiet_hours(user_id, raw)
-    await update.effective_message.reply_text(f"Quiet hours set to {raw}")
+    await update.effective_message.reply_text(localize(lang, "Quiet hours set to {raw}", "Тихі години встановлено: {raw}", raw=raw))
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
+    lang = get_user_language(context, user_id)
 
     category = "build"
     tail = context.args
@@ -416,15 +471,27 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     existing, created = get_db(context).get_or_start_timer(user_id, category, now, note)
     if existing:
         await update.effective_message.reply_text(
-            f"A timer is already running for {existing.category} since {existing.started_at.strftime('%H:%M')}"
+            localize(
+                lang,
+                "A timer is already running for {cat} since {time}",
+                "Таймер вже запущено для {cat} з {time}",
+                cat=existing.category,
+                time=existing.started_at.strftime("%H:%M"),
+            )
         )
         return
 
     await update.effective_message.reply_text(
         (
-            f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}"
+            localize(
+                lang,
+                "Timer started for {cat} at {time}",
+                "Таймер запущено для {cat} о {time}",
+                cat=created.category,
+                time=created.started_at.strftime("%H:%M"),
+            )
             if created.category != "spend"
-            else f"Spend timer started at {created.started_at.strftime('%H:%M')}"
+            else localize(lang, "Spend timer started at {time}", "Таймер витрат запущено о {time}", time=created.started_at.strftime("%H:%M"))
         )
     )
 
@@ -432,9 +499,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     session = db.stop_timer(user_id)
     if not session:
-        await update.effective_message.reply_text("No active timer")
+        await update.effective_message.reply_text(localize(lang, "No active timer", "Немає активного таймера"))
         return
 
     elapsed = now - session.started_at
@@ -457,7 +525,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             (
                 f"⏱️ Spend session complete: {minutes}m\n\n"
                 f"📝 Logged fun spend: {minutes} min\n\n"
-                f"{status_message(view, username=update.effective_user.username)}"
+                f"{status_message(view, username=update.effective_user.username, lang=lang)}"
             ),
             reply_markup=build_keyboard(),
         )
@@ -482,7 +550,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"⚡ XP earned: {outcome.xp_earned} ({outcome.deep_mult:.1f}x deep work, {outcome.streak_mult:.1f}x streak)\n"
             f"🔥 Streak: {outcome.streak.current_streak} days\n"
             f"💰 Fun earned: +{outcome.entry.fun_earned} min\n\n"
-            f"{status_message(view, username=update.effective_user.username)}"
+            f"{status_message(view, username=update.effective_user.username, lang=lang)}"
         ),
         reply_markup=build_keyboard(),
     )
@@ -500,15 +568,16 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     view = compute_status(db, user_id, now)
 
     if view.economy.remaining_fun_minutes < 200:
-        await update.effective_message.reply_text("Need at least 200 fun minutes to buy a streak freeze.")
+        await update.effective_message.reply_text(localize(lang, "Need at least 200 fun minutes to buy a streak freeze.", "Потрібно щонайменше 200 fun хвилин для покупки freeze."))
         return
 
     freeze_date = now.date() + timedelta(days=1)
     if db.has_freeze_on_date(user_id, freeze_date):
-        await update.effective_message.reply_text("Freeze already active for tomorrow.")
+        await update.effective_message.reply_text(localize(lang, "Freeze already active for tomorrow.", "Freeze вже активний на завтра."))
         return
 
     db.add_entry(
@@ -523,7 +592,12 @@ async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     db.create_freeze(user_id, freeze_date, now)
 
     await update.effective_message.reply_text(
-        f"🧊 Streak freeze purchased for {freeze_date.isoformat()} (-200 fun minutes)."
+        localize(
+            lang,
+            "🧊 Streak freeze purchased for {date} (-200 fun minutes).",
+            "🧊 Freeze для серії куплено на {date} (-200 fun хвилин).",
+            date=freeze_date.isoformat(),
+        )
     )
 
 
@@ -531,16 +605,26 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     settings = get_settings(context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
 
     if not db.is_feature_enabled("llm"):
-        await update.effective_message.reply_text("LLM features are currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "LLM features are currently disabled by admin.", "LLM-функції зараз вимкнені адміністратором."))
         return
     if not db.is_feature_enabled("agent"):
-        await update.effective_message.reply_text("Agent runtime is currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Agent runtime is currently disabled by admin.", "Середовище агента зараз вимкнено адміністратором."))
         return
 
     if not settings.openrouter_api_key:
-        await update.effective_message.reply_text("LLM agent is disabled. Set OPENROUTER_API_KEY.")
+        await update.effective_message.reply_text(t("llm_disabled_key", lang))
+        return
+
+    if context.args and context.args[0].lower() == "models":
+        cfg = load_model_config(settings.agent_models_path)
+        rows = [f"Default tier: {cfg.default_tier}"]
+        for tier_name, tier in cfg.tiers.items():
+            ids = ", ".join(m.id for m in tier.models[:4])
+            rows.append(f"- {tier_name}: {ids}")
+        await update.effective_message.reply_text("\n".join(rows))
         return
 
     tier_override: str | None = None
@@ -550,20 +634,20 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         question_args = context.args[2:]
     question = " ".join(question_args).strip()
     if not question:
-        await update.effective_message.reply_text("Usage: /llm <question about your stats>")
+        await update.effective_message.reply_text(t("llm_usage", lang))
         return
 
     day_key = now.date().isoformat()
     usage = db.get_llm_usage(user_id, day_key)
     if usage.request_count >= LLM_DAILY_LIMIT:
-        await update.effective_message.reply_text("Daily /llm limit reached. Try again tomorrow.")
+        await update.effective_message.reply_text(localize(lang, "Daily /llm limit reached. Try again tomorrow.", "Денний ліміт /llm вичерпано. Спробуй завтра."))
         return
     if usage.last_request_at and (now - usage.last_request_at).total_seconds() < LLM_COOLDOWN_SECONDS:
-        await update.effective_message.reply_text("Please wait a bit before the next /llm question.")
+        await update.effective_message.reply_text(localize(lang, "Please wait a bit before the next /llm question.", "Зачекай трохи перед наступним /llm запитом."))
         return
 
     db.increment_llm_usage(user_id, day_key, now)
-    pending = await update.effective_message.reply_text("🤖 Working on your question...")
+    pending = await update.effective_message.reply_text(f"🤖 {t('llm_working', lang)}")
     result = run_llm_agent(
         db=db,
         settings=settings,
@@ -579,7 +663,7 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prompt_tokens = int(result.get("prompt_tokens", 0) or 0)
     completion_tokens = int(result.get("completion_tokens", 0) or 0)
     if not answer:
-        await pending.edit_text("LLM could not answer right now. Try again later.")
+        await pending.edit_text(localize(lang, "LLM could not answer right now. Try again later.", "LLM зараз не зміг відповісти. Спробуй пізніше."))
         return
     await pending.edit_text(
         f"{answer}\n\n`model: {model_used} | tier: {tier_used} | status: {status} | tok: {prompt_tokens}/{completion_tokens}`"
@@ -590,14 +674,15 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user_id, _, now = touch_user(update, context)
     settings = get_settings(context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     if not db.is_feature_enabled("search"):
-        await update.effective_message.reply_text("Search is currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Search is currently disabled by admin.", "Пошук зараз вимкнений адміністратором."))
         return
     query = " ".join(context.args).strip()
     if not query:
-        await update.effective_message.reply_text("Usage: /search <query>")
+        await update.effective_message.reply_text(t("search_usage", lang))
         return
-    pending = await update.effective_message.reply_text("🔎 Searching web...")
+    pending = await update.effective_message.reply_text(f"🔎 {t('search_working', lang)}")
     res = run_search_tool(
         db=db,
         settings=settings,
@@ -607,7 +692,7 @@ async def cmd_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         max_results=5,
     )
     if not res["ok"]:
-        await pending.edit_text(f"Search failed: {res['content']}")
+        await pending.edit_text(localize(lang, "Search failed: {err}", "Помилка пошуку: {err}", err=res["content"]))
         return
     provider = str(res.get("metadata", {}).get("provider", "unknown"))
     cached = bool(res.get("metadata", {}).get("cached", False))
@@ -623,6 +708,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     user_id, _, now = touch_user(update, context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     data = query.data or ""
 
     if data.startswith("log:"):
@@ -640,7 +726,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         view = compute_status(db, user_id, now)
         await query.message.reply_text(
-            f"Logged {minutes}m {outcome.entry.category}.\n⚡ XP +{outcome.xp_earned}\n💰 Fun +{outcome.entry.fun_earned}\n\n{status_message(view)}",
+            f"{localize(lang, 'Logged {minutes}m {category}.', 'Додано {minutes}хв {category}.', minutes=minutes, category=outcome.entry.category)}\n"
+            f"⚡ XP +{outcome.xp_earned}\n💰 Fun +{outcome.entry.fun_earned}\n\n{status_message(view, lang=lang)}",
             reply_markup=build_keyboard(),
         )
         return
@@ -658,46 +745,47 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         view = compute_status(db, user_id, now)
         await query.message.reply_text(
-            f"Logged {minutes}m fun spend.\n\n{status_message(view)}",
+            f"{localize(lang, 'Logged {minutes}m fun spend.', 'Додано витрати відпочинку: {minutes}хв.', minutes=minutes)}\n\n{status_message(view, lang=lang)}",
             reply_markup=build_keyboard(),
         )
         return
 
     if data == "status":
         view = compute_status(db, user_id, now)
-        await query.message.reply_text(status_message(view), reply_markup=build_keyboard())
+        await query.message.reply_text(status_message(view, lang=lang), reply_markup=build_keyboard())
         return
 
     if data == "week":
         view = compute_status(db, user_id, now)
-        await query.message.reply_text(week_message(view), reply_markup=build_keyboard())
+        await query.message.reply_text(week_message(view, lang=lang), reply_markup=build_keyboard())
         return
 
     if data == "undo":
         removed = db.undo_last_entry(user_id, now)
         if not removed:
-            await query.message.reply_text("Nothing to undo")
+            await query.message.reply_text(localize(lang, "Nothing to undo", "Нічого скасовувати"))
             return
-        await query.message.reply_text(entry_removed_message(removed), reply_markup=build_keyboard())
+        await query.message.reply_text(entry_removed_message(removed, lang=lang), reply_markup=build_keyboard())
 
 
 async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     settings = get_settings(context)
     db = get_db(context)
+    lang = get_user_language(context, user_id)
     text = (update.effective_message.text or "").strip()
     if not text or text.startswith("/"):
         return
 
     if not db.is_feature_enabled("llm"):
         await update.effective_message.reply_text(
-            "Nothing happened. Free-form parsing is disabled by admin."
+            localize(lang, "Nothing happened. Free-form parsing is disabled by admin.", "Нічого не сталося. Вільний LLM-парсинг вимкнено адміністратором.")
         )
         return
 
     if not settings.llm_enabled or not settings.llm_api_key:
         await update.effective_message.reply_text(
-            "Nothing happened. Free-form LLM parsing is disabled. Use /help for commands."
+            localize(lang, "Nothing happened. Free-form LLM parsing is disabled. Use /help for commands.", "Нічого не сталося. Вільний LLM-парсинг вимкнений. Використай /help для команд.")
         )
         return
 
@@ -715,12 +803,12 @@ async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
     except Exception:
         logger.exception("LLM parse failed")
-        await update.effective_message.reply_text("Something went wrong while parsing. Nothing was logged.")
+        await update.effective_message.reply_text(localize(lang, "Something went wrong while parsing. Nothing was logged.", "Сталася помилка під час парсингу. Нічого не записано."))
         return
 
     if not parsed:
         await update.effective_message.reply_text(
-            "Nothing happened. I could not map that text to a log action."
+            localize(lang, "Nothing happened. I could not map that text to a log action.", "Нічого не сталося. Я не зміг перетворити цей текст у дію логування.")
         )
         return
 
@@ -747,13 +835,16 @@ async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
 
     view = compute_status(db, user_id, now)
-    await update.effective_message.reply_text(f"Parsed and logged via LLM.\n\n{status_message(view)}")
+    await update.effective_message.reply_text(
+        f"{localize(lang, 'Parsed and logged via LLM.', 'Розібрано й додано через LLM.')}\n\n{status_message(view, lang=lang)}"
+    )
 
 
 async def handle_unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    touch_user(update, context)
+    user_id, _, _ = touch_user(update, context)
+    lang = get_user_language(context, user_id)
     await update.effective_message.reply_text(
-        "Nothing happened. Unknown command. Use /help to see all commands."
+        t("unknown_command", lang)
     )
 
 
@@ -772,8 +863,9 @@ def register_core_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("freeze", cmd_freeze))
     app.add_handler(CommandHandler("llm", cmd_llm))
     app.add_handler(CommandHandler("search", cmd_search))
+    app.add_handler(CommandHandler("lang", cmd_lang))
     app.add_handler(CommandHandler("rules", cmd_rules))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(CallbackQueryHandler(handle_callback, pattern=r"^(log:|spend:|status$|week$|undo$)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_form))
 
 

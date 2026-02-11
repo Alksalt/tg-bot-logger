@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import secrets
 import shlex
+from datetime import timedelta
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from tg_time_logger.commands_shared import touch_user
+from tg_time_logger.agents.orchestration.runner import run_search_tool
+from tg_time_logger.commands_shared import get_settings, get_user_language, touch_user
 from tg_time_logger.db import Database
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
+from tg_time_logger.i18n import localize
 from tg_time_logger.service import compute_status
+from tg_time_logger.shop_pricing import nok_to_fun_minutes, parse_nok_literal, pick_nok_candidate
 from tg_time_logger.shop import monthly_budget_remaining
+
+PENDING_PRICE_ADDS_KEY = "shop_pending_price_adds"
+PENDING_TTL_MINUTES = 20
 
 
 def _db(context: ContextTypes.DEFAULT_TYPE) -> Database:
@@ -27,7 +35,7 @@ def _normalize_smart_quotes(value: str) -> str:
     )
 
 
-def _parse_shop_add(raw_args: list[str]) -> tuple[str, str, int, float | None]:
+def _parse_shop_add(raw_args: list[str], minutes_per_nok: int = 3) -> tuple[str, str, int, float | None]:
     raw = _normalize_smart_quotes(" ".join(raw_args))
     try:
         parts = shlex.split(raw)
@@ -35,13 +43,21 @@ def _parse_shop_add(raw_args: list[str]) -> tuple[str, str, int, float | None]:
         parts = raw.split()
 
     if len(parts) < 3:
-        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration> [nok_value]")
+        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration|nok_value> [nok_value]")
 
     emoji = parts[0]
-    nok: float | None = None
     cost_idx = len(parts) - 1
+    nok: float | None = None
 
-    # Optional NOK value at the end.
+    explicit_nok = parse_nok_literal(parts[cost_idx])
+    if explicit_nok is not None:
+        name = " ".join(parts[1:cost_idx]).strip()
+        if not name:
+            raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration|nok_value> [nok_value]")
+        cost = nok_to_fun_minutes(explicit_nok, minutes_per_nok)
+        return emoji, name, cost, explicit_nok
+
+    # Optional trailing NOK metadata when cost is given in minutes/duration.
     if len(parts) >= 4:
         try:
             candidate_nok = float(parts[-1])
@@ -59,78 +75,264 @@ def _parse_shop_add(raw_args: list[str]) -> tuple[str, str, int, float | None]:
 
     name = " ".join(parts[1:cost_idx]).strip()
     if not name:
-        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration> [nok_value]")
+        raise ValueError("Usage: /shop add <emoji> \"name\" <cost_minutes|duration|nok_value> [nok_value]")
 
     return emoji, name, cost, nok
+
+
+def _parse_shop_price(raw_args: list[str]) -> tuple[str, str, str]:
+    raw = _normalize_smart_quotes(" ".join(raw_args))
+    try:
+        parts = shlex.split(raw)
+    except ValueError:
+        parts = raw.split()
+    if len(parts) < 3:
+        raise ValueError("Usage: /shop price <emoji> \"name\" <query>")
+    emoji = parts[0]
+    name = parts[1].strip()
+    query = " ".join(parts[2:]).strip()
+    if not name or not query:
+        raise ValueError("Usage: /shop price <emoji> \"name\" <query>")
+    return emoji, name, query
+
+
+def _minutes_per_nok(db: Database) -> int:
+    raw = db.get_app_config_value("economy.nok_to_fun_minutes")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 3
+    return max(1, value)
+
+
+def _shop_pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, dict[str, object]]:
+    store = context.application.bot_data.get(PENDING_PRICE_ADDS_KEY)
+    if isinstance(store, dict):
+        return store
+    created: dict[str, dict[str, object]] = {}
+    context.application.bot_data[PENDING_PRICE_ADDS_KEY] = created
+    return created
+
+
+def _cleanup_pending(context: ContextTypes.DEFAULT_TYPE, now_iso: str) -> None:
+    now_val = now_iso
+    store = _shop_pending(context)
+    stale: list[str] = []
+    for token, payload in store.items():
+        expires = str(payload.get("expires_at", ""))
+        if expires and expires <= now_val:
+            stale.append(token)
+    for token in stale:
+        store.pop(token, None)
+
+
+def _parse_price_args(raw_args: list[str]) -> tuple[list[str], bool]:
+    normalized: list[str] = []
+    auto_add = False
+    for arg in raw_args:
+        if arg.strip().lower() == "--add":
+            auto_add = True
+            continue
+        normalized.append(arg)
+    return normalized, auto_add
 
 
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    settings = get_settings(context)
+    lang = get_user_language(context, user_id)
+    _cleanup_pending(context, now.isoformat())
     if not db.is_feature_enabled("shop"):
-        await update.effective_message.reply_text("Shop is currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Shop is currently disabled by admin.", "Магазин зараз вимкнений адміністратором."))
         return
+
+    ratio = _minutes_per_nok(db)
 
     if not context.args:
         view = compute_status(db, user_id, now)
         budget_left = monthly_budget_remaining(db, user_id, now)
-        lines = [f"🛍️ Shop (fun balance: {view.economy.remaining_fun_minutes}m)"]
+        lines = [
+            localize(lang, "🛍️ Shop (fun balance: {bal}m)", "🛍️ Магазин (баланс fun: {bal}хв)", bal=view.economy.remaining_fun_minutes),
+            localize(lang, "Price conversion: 1 NOK = {ratio} fun min", "Конвертація: 1 NOK = {ratio} fun хв", ratio=ratio),
+        ]
         if budget_left is not None:
-            lines.append(f"Monthly budget left: {budget_left}m")
+            lines.append(localize(lang, "Monthly budget left: {mins}m", "Залишок місячного бюджету: {mins}хв", mins=budget_left))
         for item in db.list_shop_items(user_id):
-            lines.append(f"{item.id}. {item.emoji} {item.name} — {item.cost_fun_minutes}m")
+            if item.nok_value and item.nok_value > 0:
+                lines.append(
+                    f"{item.id}. {item.emoji} {item.name} — {item.cost_fun_minutes}m (~{int(round(item.nok_value))} NOK)"
+                )
+            else:
+                lines.append(f"{item.id}. {item.emoji} {item.name} — {item.cost_fun_minutes}m")
         await update.effective_message.reply_text("\n".join(lines))
         return
 
     action = context.args[0].lower()
     if action == "add":
         try:
-            emoji, name, cost, nok = _parse_shop_add(context.args[1:])
+            emoji, name, cost, nok = _parse_shop_add(context.args[1:], ratio)
         except ValueError as exc:
             await update.effective_message.reply_text(str(exc))
             return
         item = db.add_shop_item(user_id, name, emoji, cost, nok, now)
-        await update.effective_message.reply_text(f"Added shop item {item.id}: {item.emoji} {item.name} ({item.cost_fun_minutes}m)")
+        if nok is not None:
+            await update.effective_message.reply_text(
+                (
+                    localize(
+                        lang,
+                        "Added shop item {id}: {emoji} {name} ({cost}m)\nBased on {nok} NOK at 1 NOK = {ratio} fun min",
+                        "Додано товар {id}: {emoji} {name} ({cost}хв)\nНа основі {nok} NOK при 1 NOK = {ratio} fun хв",
+                        id=item.id,
+                        emoji=item.emoji,
+                        name=item.name,
+                        cost=item.cost_fun_minutes,
+                        nok=int(round(nok)),
+                        ratio=ratio,
+                    )
+                )
+            )
+        else:
+            await update.effective_message.reply_text(
+                localize(
+                    lang,
+                    "Added shop item {id}: {emoji} {name} ({cost}m)",
+                    "Додано товар {id}: {emoji} {name} ({cost}хв)",
+                    id=item.id,
+                    emoji=item.emoji,
+                    name=item.name,
+                    cost=item.cost_fun_minutes,
+                )
+            )
         return
 
     if action == "remove" and len(context.args) >= 2 and context.args[1].isdigit():
         ok = db.deactivate_shop_item(user_id, int(context.args[1]))
-        await update.effective_message.reply_text("Item removed" if ok else "Item not found")
+        await update.effective_message.reply_text(localize(lang, "Item removed", "Товар видалено") if ok else localize(lang, "Item not found", "Товар не знайдено"))
+        return
+
+    if action == "price":
+        if not db.is_feature_enabled("search"):
+            await update.effective_message.reply_text(localize(lang, "Search is disabled by admin, cannot estimate NOK price.", "Пошук вимкнений адміністратором, не можу оцінити ціну в NOK."))
+            return
+        price_args, auto_add = _parse_price_args(context.args[1:])
+        try:
+            emoji, name, query = _parse_shop_price(price_args)
+        except ValueError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return
+        pending = await update.effective_message.reply_text(localize(lang, "Checking web prices...", "Перевіряю ціни в інтернеті..."))
+        res = run_search_tool(
+            db=db,
+            settings=settings,
+            user_id=user_id,
+            now=now,
+            query=query,
+            max_results=6,
+        )
+        if not res["ok"]:
+            await pending.edit_text(localize(lang, "Price search failed: {err}", "Помилка пошуку цін: {err}", err=res["content"]))
+            return
+        provider = str(res.get("metadata", {}).get("provider") or "unknown")
+        cached = bool(res.get("metadata", {}).get("cached", False))
+        content = str(res.get("content", "")).strip()
+        meta = f"{provider}{', cached' if cached else ''}"
+        nok_guess = pick_nok_candidate(content)
+        if nok_guess is None:
+            await pending.edit_text(
+                (
+                    f"{localize(lang, 'Could not detect a NOK price from results ({meta}).', 'Не вдалося визначити ціну в NOK з результатів ({meta}).', meta=meta)}\n"
+                    f"{localize(lang, 'Use manual add: /shop add <emoji> \"name\" <minutes> [nok]', 'Використай ручне додавання: /shop add <emoji> \"name\" <minutes> [nok]')}\n\n"
+                    f"Top results:\n{content[:2500]}"
+                )
+            )
+            return
+        cost_minutes = nok_to_fun_minutes(nok_guess, ratio)
+        suggested_nok = int(round(nok_guess))
+        if auto_add:
+            token = secrets.token_urlsafe(8)
+            _shop_pending(context)[token] = {
+                "user_id": user_id,
+                "emoji": emoji,
+                "name": name,
+                "cost": cost_minutes,
+                "nok": suggested_nok,
+                "expires_at": (now + timedelta(minutes=PENDING_TTL_MINUTES)).isoformat(),
+            }
+            kb = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            text=localize(lang, "Confirm add", "Підтвердити"),
+                            callback_data=f"shop_price_add:{token}",
+                        ),
+                        InlineKeyboardButton(
+                            text=localize(lang, "Cancel", "Скасувати"),
+                            callback_data=f"shop_price_cancel:{token}",
+                        ),
+                    ]
+                ]
+            )
+            await pending.edit_text(
+                (
+                    f"{localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta)}\n"
+                    f"{localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok)}\n"
+                    f"{localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio)}\n"
+                    f"{localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes)}\n\n"
+                    f"{localize(lang, 'Top results:', 'Топ результатів:')}\n{content[:1800]}"
+                ),
+                reply_markup=kb,
+            )
+            return
+
+        suggested_cmd = f'/shop add {emoji} "{name}" {cost_minutes}m {suggested_nok}'
+        await pending.edit_text(
+            (
+                f"{localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta)}\n"
+                f"{localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok)}\n"
+                f"{localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio)}\n"
+                f"{localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes)}\n\n"
+                f"{localize(lang, 'Suggested command:', 'Рекомендована команда:')}\n"
+                f"{suggested_cmd}\n\n"
+                f"{localize(lang, 'Top results:', 'Топ результатів:')}\n{content[:2200]}"
+            )
+        )
         return
 
     if action == "budget" and len(context.args) >= 2:
         value = context.args[1].lower()
         if value in {"off", "none", "0"}:
             db.update_shop_budget(user_id, None)
-            await update.effective_message.reply_text("Shop monthly budget disabled")
+            await update.effective_message.reply_text(localize(lang, "Shop monthly budget disabled", "Місячний бюджет магазину вимкнено"))
             return
         if not value.isdigit():
-            await update.effective_message.reply_text("Usage: /shop budget <minutes>|off")
+            await update.effective_message.reply_text(localize(lang, "Usage: /shop budget <minutes>|off", "Використання: /shop budget <minutes>|off"))
             return
         db.update_shop_budget(user_id, int(value))
-        await update.effective_message.reply_text(f"Shop monthly budget set to {value}m")
+        await update.effective_message.reply_text(localize(lang, "Shop monthly budget set to {value}m", "Місячний бюджет магазину: {value}хв", value=value))
         return
 
-    await update.effective_message.reply_text("Usage: /shop, /shop add, /shop remove, /shop budget")
+    await update.effective_message.reply_text(localize(lang, "Usage: /shop, /shop add, /shop price, /shop remove, /shop budget", "Використання: /shop, /shop add, /shop price, /shop remove, /shop budget"))
 
 
 async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    lang = get_user_language(context, user_id)
     if not db.is_feature_enabled("shop"):
-        await update.effective_message.reply_text("Shop is currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Shop is currently disabled by admin.", "Магазин зараз вимкнений адміністратором."))
         return
 
     if not context.args:
-        await update.effective_message.reply_text("Usage: /redeem <item_id|item_name> OR /redeem history")
+        await update.effective_message.reply_text(localize(lang, "Usage: /redeem <item_id|item_name> OR /redeem history", "Використання: /redeem <item_id|item_name> OR /redeem history"))
         return
 
     if context.args[0].lower() == "history":
         rows = db.list_redemptions(user_id, limit=20)
         if not rows:
-            await update.effective_message.reply_text("No redemptions yet.")
+            await update.effective_message.reply_text(localize(lang, "No redemptions yet.", "Покупок ще немає."))
             return
-        lines = ["Redemption history:"]
+        lines = [localize(lang, "Redemption history:", "Історія покупок:")]
         for r in rows:
             lines.append(f"- {r['emoji']} {r['name']} ({r['fun_minutes_spent']}m)")
         await update.effective_message.reply_text("\n".join(lines))
@@ -139,18 +341,18 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     identifier = " ".join(context.args)
     item = db.find_shop_item(user_id, identifier)
     if not item:
-        await update.effective_message.reply_text("Shop item not found")
+        await update.effective_message.reply_text(localize(lang, "Shop item not found", "Товар не знайдено"))
         return
 
     view = compute_status(db, user_id, now)
     spendable_for_shop = view.economy.remaining_fun_minutes + view.economy.saved_fun_minutes
     if spendable_for_shop < item.cost_fun_minutes:
-        await update.effective_message.reply_text("Not enough fun minutes for this redemption")
+        await update.effective_message.reply_text(localize(lang, "Not enough fun minutes for this redemption", "Недостатньо fun хвилин для цієї покупки"))
         return
 
     budget_left = monthly_budget_remaining(db, user_id, now)
     if budget_left is not None and budget_left < item.cost_fun_minutes:
-        await update.effective_message.reply_text(f"Monthly budget exceeded. Remaining: {budget_left}m")
+        await update.effective_message.reply_text(localize(lang, "Monthly budget exceeded. Remaining: {mins}m", "Місячний бюджет перевищено. Залишок: {mins}хв", mins=budget_left))
         return
 
     from_fund = min(item.cost_fun_minutes, max(view.economy.saved_fun_minutes, 0))
@@ -169,9 +371,15 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     await update.effective_message.reply_text(
-        (
-            f"{item.emoji} Redeemed: {item.name}! -{item.cost_fun_minutes} fun min\n"
-            f"Used from fund: {moved}m | from remaining: {from_remaining}m"
+        localize(
+            lang,
+            "{emoji} Redeemed: {name}! -{cost} fun min\nUsed from fund: {fund}m | from remaining: {remain}m",
+            "{emoji} Придбано: {name}! -{cost} fun хв\nЗ фонду: {fund}хв | із залишку: {remain}хв",
+            emoji=item.emoji,
+            name=item.name,
+            cost=item.cost_fun_minutes,
+            fund=moved,
+            remain=from_remaining,
         )
     )
 
@@ -179,27 +387,31 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
     db = _db(context)
+    lang = get_user_language(context, user_id)
     if not db.is_feature_enabled("savings"):
-        await update.effective_message.reply_text("Savings fund is currently disabled by admin.")
+        await update.effective_message.reply_text(localize(lang, "Savings fund is currently disabled by admin.", "Фонд заощаджень зараз вимкнений адміністратором."))
         return
 
     if not context.args:
         goal = db.get_active_savings_goal(user_id)
         if not goal:
             await update.effective_message.reply_text(
-                "No save fund yet. Use /save fund <duration> or /save goal <duration> [name]."
+                localize(lang, "No save fund yet. Use /save fund <duration> or /save goal <duration> [name].", "Фонду ще немає. Використай /save fund <duration> або /save goal <duration> [name].")
             )
             return
         pct = (goal.saved_fun_minutes / goal.target_fun_minutes * 100) if goal.target_fun_minutes else 0
         settings = db.get_settings(user_id)
         sunday = settings.sunday_fund_percent
         await update.effective_message.reply_text(
-            (
-                "🏦 Save fund\n"
-                f"Goal: {goal.name}\n"
-                f"Progress: {goal.saved_fun_minutes}/{goal.target_fun_minutes}m ({pct:.1f}%)\n"
-                f"Sunday auto-transfer: {'off' if sunday == 0 else f'{sunday}% on'}\n"
-                "Use /save fund <duration> to add minutes."
+            localize(
+                lang,
+                "🏦 Save fund\nGoal: {name}\nProgress: {saved}/{target}m ({pct:.1f}%)\nSunday auto-transfer: {sunday}\nUse /save fund <duration> to add minutes.",
+                "🏦 Фонд збереження\nЦіль: {name}\nПрогрес: {saved}/{target}хв ({pct:.1f}%)\nНедільний автопереказ: {sunday}\nВикористай /save fund <duration> для поповнення.",
+                name=goal.name,
+                saved=goal.saved_fun_minutes,
+                target=goal.target_fun_minutes,
+                pct=pct,
+                sunday=("off" if sunday == 0 else f"{sunday}% on"),
             )
         )
         return
@@ -214,7 +426,7 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         name = " ".join(context.args[2:]).strip() or "Save fund"
         goal = db.upsert_active_savings_goal(user_id, name, target, now)
         await update.effective_message.reply_text(
-            f"Save goal set: {goal.name} ({goal.saved_fun_minutes}/{goal.target_fun_minutes}m)"
+            localize(lang, "Save goal set: {name} ({saved}/{target}m)", "Ціль збереження встановлено: {name} ({saved}/{target}хв)", name=goal.name, saved=goal.saved_fun_minutes, target=goal.target_fun_minutes)
         )
         return
 
@@ -226,15 +438,23 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         view = compute_status(db, user_id, now)
         if view.economy.remaining_fun_minutes < minutes:
-            await update.effective_message.reply_text("Not enough available fun minutes to deposit")
+            await update.effective_message.reply_text(localize(lang, "Not enough available fun minutes to deposit", "Недостатньо доступних fun хвилин для внеску"))
             return
         db.ensure_fund_goal(user_id, now)
         goal = db.deposit_to_savings(user_id, minutes, now)
         if not goal:
-            await update.effective_message.reply_text("Could not update save fund right now. Try again.")
+            await update.effective_message.reply_text(localize(lang, "Could not update save fund right now. Try again.", "Не вдалося оновити фонд збереження. Спробуй ще раз."))
             return
         await update.effective_message.reply_text(
-            f"Deposited {minutes}m into '{goal.name}' ({goal.saved_fun_minutes}/{goal.target_fun_minutes})"
+            localize(
+                lang,
+                "Deposited {mins}m into '{name}' ({saved}/{target})",
+                "Додано {mins}хв до '{name}' ({saved}/{target})",
+                mins=minutes,
+                name=goal.name,
+                saved=goal.saved_fun_minutes,
+                target=goal.target_fun_minutes,
+            )
         )
         return
 
@@ -242,24 +462,28 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if len(context.args) == 1:
             percent = db.get_settings(user_id).sunday_fund_percent
             await update.effective_message.reply_text(
-                f"Sunday auto-transfer is {'off' if percent == 0 else f'on ({percent}%)'}.\n"
-                "Use /save sunday on 50|60|70 or /save sunday off."
+                localize(
+                    lang,
+                    "Sunday auto-transfer is {mode}.\nUse /save sunday on 50|60|70 or /save sunday off.",
+                    "Недільний автопереказ: {mode}.\nВикористай /save sunday on 50|60|70 або /save sunday off.",
+                    mode=("off" if percent == 0 else f"on ({percent}%)"),
+                )
             )
             return
         sub = context.args[1].lower()
         if sub == "off":
             db.update_sunday_fund_percent(user_id, 0)
-            await update.effective_message.reply_text("Sunday auto-transfer disabled.")
+            await update.effective_message.reply_text(localize(lang, "Sunday auto-transfer disabled.", "Недільний автопереказ вимкнено."))
             return
         if sub == "on":
             if len(context.args) < 3 or context.args[2] not in {"50", "60", "70"}:
-                await update.effective_message.reply_text("Usage: /save sunday on 50|60|70")
+                await update.effective_message.reply_text(localize(lang, "Usage: /save sunday on 50|60|70", "Використання: /save sunday on 50|60|70"))
                 return
             percent = int(context.args[2])
             db.update_sunday_fund_percent(user_id, percent)
-            await update.effective_message.reply_text(f"Sunday auto-transfer enabled: {percent}% of available fun.")
+            await update.effective_message.reply_text(localize(lang, "Sunday auto-transfer enabled: {p}% of available fun.", "Недільний автопереказ увімкнено: {p}% доступного fun.", p=percent))
             return
-        await update.effective_message.reply_text("Usage: /save sunday on 50|60|70 OR /save sunday off")
+        await update.effective_message.reply_text(localize(lang, "Usage: /save sunday on 50|60|70 OR /save sunday off", "Використання: /save sunday on 50|60|70 OR /save sunday off"))
         return
 
     if action == "auto" and len(context.args) >= 2:
@@ -269,16 +493,78 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.effective_message.reply_text(str(exc))
             return
         db.update_auto_save_minutes(user_id, minutes)
-        await update.effective_message.reply_text(f"Auto-save set to {minutes}m/day")
+        await update.effective_message.reply_text(localize(lang, "Auto-save set to {mins}m/day", "Автозбереження: {mins}хв/день", mins=minutes))
         return
 
     if action == "cancel" and len(context.args) >= 2 and context.args[1].isdigit():
         ok = db.cancel_savings_goal(user_id, int(context.args[1]))
-        await update.effective_message.reply_text("Savings goal cancelled" if ok else "Goal not found")
+        await update.effective_message.reply_text(localize(lang, "Savings goal cancelled", "Ціль збереження скасовано") if ok else localize(lang, "Goal not found", "Ціль не знайдено"))
         return
 
     await update.effective_message.reply_text(
-        "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off"
+        localize(
+            lang,
+            "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off",
+            "Використання: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off",
+        )
+    )
+
+
+async def handle_shop_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+
+    user_id, _, now = touch_user(update, context)
+    lang = get_user_language(context, user_id)
+    data = query.data or ""
+    if ":" not in data:
+        return
+    action, token = data.split(":", maxsplit=1)
+    store = _shop_pending(context)
+    payload = store.get(token)
+    if not payload:
+        await query.edit_message_text(localize(lang, "Request expired. Run /shop price --add again.", "Запит застарів. Запусти /shop price --add ще раз."))
+        return
+
+    expires_at = str(payload.get("expires_at") or "")
+    if expires_at and expires_at <= now.isoformat():
+        store.pop(token, None)
+        await query.edit_message_text(localize(lang, "Request expired. Run /shop price --add again.", "Запит застарів. Запусти /shop price --add ще раз."))
+        return
+
+    if int(payload.get("user_id") or 0) != user_id:
+        await query.answer(localize(lang, "This confirmation is not yours.", "Це підтвердження не для тебе."), show_alert=True)
+        return
+
+    if action == "shop_price_cancel":
+        store.pop(token, None)
+        await query.edit_message_text(localize(lang, "Cancelled. Item was not added.", "Скасовано. Товар не додано."))
+        return
+
+    if action != "shop_price_add":
+        return
+
+    db = _db(context)
+    item = db.add_shop_item(
+        user_id=user_id,
+        name=str(payload.get("name") or "Item"),
+        emoji=str(payload.get("emoji") or "🎁"),
+        cost_fun_minutes=int(payload.get("cost") or 0),
+        nok_value=float(payload.get("nok") or 0),
+        created_at=now,
+    )
+    store.pop(token, None)
+    await query.edit_message_text(
+        localize(
+            lang,
+            "Added shop item {id}: {emoji} {name} ({cost}m)",
+            "Додано товар {id}: {emoji} {name} ({cost}хв)",
+            id=item.id,
+            emoji=item.emoji,
+            name=item.name,
+            cost=item.cost_fun_minutes,
+        )
     )
 
 
@@ -286,3 +572,4 @@ def register_shop_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("shop", cmd_shop))
     app.add_handler(CommandHandler("redeem", cmd_redeem))
     app.add_handler(CommandHandler("save", cmd_save))
+    app.add_handler(CallbackQueryHandler(handle_shop_callbacks, pattern=r"^shop_price_(?:add|cancel):"))

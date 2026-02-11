@@ -5,6 +5,7 @@ from telegram.ext import ContextTypes
 
 from tg_time_logger.config import Settings
 from tg_time_logger.db import Database
+from tg_time_logger.i18n import normalize_language_code
 from tg_time_logger.llm_messages import LlmContext, level_up_message
 from tg_time_logger.llm_router import LlmRoute
 
@@ -43,6 +44,12 @@ def get_settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
     settings = context.application.bot_data.get("settings")
     assert isinstance(settings, Settings)
     return settings
+
+
+def get_user_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    db = get_db(context)
+    default_lang = str(db.get_app_config_value("i18n.default_language") or "en")
+    return normalize_language_code(db.get_settings(user_id).language_code, default=default_lang)
 
 
 def llm_context(context: ContextTypes.DEFAULT_TYPE) -> LlmContext:

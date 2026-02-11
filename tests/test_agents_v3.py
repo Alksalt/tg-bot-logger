@@ -110,6 +110,9 @@ def test_loop_budget_blocked_on_small_step_budget(tmp_path) -> None:
         serper_api_key=None,
         agent_models_path=Path("agents/models.yaml"),
         agent_directive_path=Path("agents/directives/llm_assistant.md"),
+        notion_api_key=None,
+        notion_database_id=None,
+        notion_backup_dir=tmp_path / "notion_backups",
     )
     tool_ctx = ToolContext(user_id=1, now=now, db=db, settings=settings, config={})
     result = loop.run(req, tool_ctx)
