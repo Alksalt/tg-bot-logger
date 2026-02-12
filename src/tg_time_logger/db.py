@@ -872,8 +872,8 @@ class Database:
         fun_earned: int | None = None,
         deep_work_multiplier: float = 1.0,
     ) -> Entry:
-        if kind not in {"productive", "spend"}:
-            raise ValueError("kind must be productive or spend")
+        if kind not in {"productive", "spend", "other"}:
+            raise ValueError("kind must be productive, spend, or other")
 
         tuning = self.get_economy_tuning()
         economy_enabled = self.is_feature_enabled("economy")
@@ -885,6 +885,10 @@ class Database:
             computed_xp = max(0, xp_earned if xp_earned is not None else default_xp)
             default_fun = fun_from_minutes(normalized_category, minutes, tuning=tuning) if economy_enabled else 0
             computed_fun = max(0, fun_earned if fun_earned is not None else default_fun)
+        elif kind == "other":
+            normalized_category = category or "other"
+            computed_xp = 0
+            computed_fun = 0
         else:
             normalized_category = "spend"
             computed_xp = 0

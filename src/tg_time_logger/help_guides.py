@@ -5,7 +5,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 COMMAND_DESCRIPTIONS: dict[str, str] = {
-    "log": "Log productive time (study, build, training, job)",
+    "log": "Log productive time or other activities",
     "spend": "Log fun/consumption time",
     "status": "Show level, XP, streak, economy summary",
     "week": "Weekly summary with plan progress",
@@ -36,12 +36,16 @@ COMMAND_DESCRIPTIONS: dict[str, str] = {
 HELP_TOPICS: dict[str, str] = {
     "log": (
         "/log <duration> [study|build|training|job] [note]\n"
-        "Logs productive time.\n\n"
-        "Duration examples:\n"
+        "/log <duration> other <description>\n"
+        "Logs productive time or other activities.\n\n"
+        "Productive examples:\n"
         "- /log 90m\n"
         "- /log 1.5h build API refactor\n"
-        "- /log 1h20m study chapter 3\n"
-        "- /log 45 training"
+        "- /log 1h20m study chapter 3\n\n"
+        "Other (no XP/fun, visible to coach/llm):\n"
+        "- /log 30m other morning walk\n"
+        "- /log 20m other breakfast\n"
+        "- /log 8h other sleep"
     ),
     "spend": (
         "/spend <duration> [note]\n"
@@ -1069,7 +1073,13 @@ _LOGGING_PAGES: list[str] = [
         "  - Fun minutes (varies by category)\n"
         "  - XP toward leveling up\n"
         "  - Progress toward weekly plan\n"
-        "  - Progress toward active quests"
+        "  - Progress toward active quests\n"
+        "\n"
+        "Other activities (no XP, no fun — just context):\n"
+        "  /log 30m other morning walk\n"
+        "  /log 20m other breakfast\n"
+        "  /log 8h other sleep\n"
+        "Coach and /llm can see these for full-day context."
     ),
 
     # Page 3: Logging fun time
@@ -1176,6 +1186,10 @@ _LOGGING_PAGES: list[str] = [
         "Log productive time:\n"
         "  /log <duration> [study|build|training|job] [note]\n"
         "  /log 90m study math homework\n"
+        "\n"
+        "Log other activities (no XP/fun):\n"
+        "  /log <duration> other <description>\n"
+        "  /log 30m other lunch break\n"
         "\n"
         "Log fun time:\n"
         "  /spend <duration> [note]\n"

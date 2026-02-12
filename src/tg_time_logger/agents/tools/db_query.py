@@ -239,6 +239,8 @@ def _format_recent_entries(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
                 f"- {ts} | +{format_minutes_hm(entry.minutes)} {entry.category}"
                 f" | XP {entry.xp_earned} | fun +{entry.fun_earned}{note}"
             )
+        elif entry.kind == "other":
+            lines.append(f"- {ts} | {format_minutes_hm(entry.minutes)} other{note}")
         else:
             lines.append(f"- {ts} | -{format_minutes_hm(entry.minutes)} spend{note}")
     return ToolResult(ok=True, content="\n".join(lines), metadata={"action": "recent_entries", "count": len(entries)})

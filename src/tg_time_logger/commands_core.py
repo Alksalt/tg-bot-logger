@@ -38,7 +38,7 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_user_language(context, user_id)
 
     if len(context.args) < 1:
-        await update.effective_message.reply_text(localize(lang, "Usage: /log <duration> [study|build|training|job] [note]", "Використання: /log <duration> [study|build|training|job] [note]"))
+        await update.effective_message.reply_text(localize(lang, "Usage: /log <duration> [study|build|training|job|other] [note]", "Використання: /log <duration> [study|build|training|job|other] [note]"))
         return
 
     try:
@@ -47,8 +47,28 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(str(exc))
         return
 
-    category = "build"
     tail = context.args[1:]
+
+    # /log 20m other breakfast with coffee
+    if tail and tail[0].lower() == "other":
+        description = " ".join(tail[1:]).strip() or None
+        db.add_entry(
+            user_id=user_id,
+            kind="other",
+            category="other",
+            minutes=minutes,
+            note=description,
+            created_at=now,
+        )
+        label = description or "other"
+        await update.effective_message.reply_text(
+            localize(lang,
+                     f"Noted: {minutes}m {label}",
+                     f"Записано: {minutes}m {label}")
+        )
+        return
+
+    category = "build"
     if tail and tail[0].lower() in PRODUCTIVE_CATEGORIES:
         category = tail[0].lower()
         tail = tail[1:]
