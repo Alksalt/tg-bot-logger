@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from tg_time_logger.agents.execution.config import ModelConfig, get_int, get_tier_order
-from tg_time_logger.agents.execution.llm_client import LlmResponse, call_openrouter, parse_json_object
+from tg_time_logger.agents.execution.llm_client import (
+    LlmResponse,
+    call_anthropic,
+    call_google,
+    call_openai,
+    call_openrouter,
+    parse_json_object,
+)
 from tg_time_logger.agents.tools.base import ToolContext
 from tg_time_logger.agents.tools.registry import ToolRegistry
 
@@ -35,11 +42,13 @@ class AgentLoop:
         api_key: str | None,
         registry: ToolRegistry,
         app_config: dict[str, Any],
+        api_keys: dict[str, str | None] | None = None,
     ) -> None:
         self.model_config = model_config
         self.api_key = api_key
         self.registry = registry
         self.app_config = app_config
+        self.api_keys = api_keys or {}
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -76,6 +85,31 @@ class AgentLoop:
 
         return None, f"Invalid action '{action}'. Expected 'answer' or 'tool'."
 
+    def _get_provider_key(self, provider: str) -> str | None:
+        if provider == "openrouter":
+            return self.api_key
+        return self.api_keys.get(provider)
+
+    def _call_single_model(
+        self,
+        model: ModelSpec,
+        messages: list[dict[str, str]],
+        max_tokens: int,
+        reasoning_enabled: bool,
+    ) -> LlmResponse | None:
+        key = self._get_provider_key(model.provider)
+        if not key:
+            return None
+        if model.provider == "openrouter":
+            return call_openrouter(model=model, messages=messages, api_key=key, max_tokens=max_tokens, reasoning_enabled=reasoning_enabled)
+        if model.provider == "openai":
+            return call_openai(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        if model.provider == "google":
+            return call_google(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        if model.provider == "anthropic":
+            return call_anthropic(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        return None
+
     def _call_models(
         self,
         messages: list[dict[str, str]],
@@ -83,8 +117,6 @@ class AgentLoop:
         allow_tier_escalation: bool,
         max_tokens: int,
     ) -> LlmResponse | None:
-        if not self.api_key:
-            return None
         reasoning_enabled = bool(self.app_config.get("agent.reasoning_enabled", True))
         tier_order = get_tier_order(self.model_config, requested_tier, allow_tier_escalation)
         for tier_name in tier_order:
@@ -92,15 +124,7 @@ class AgentLoop:
             if not tier:
                 continue
             for model in tier.models:
-                if model.provider != "openrouter":
-                    continue
-                res = call_openrouter(
-                    model=model,
-                    messages=messages,
-                    api_key=self.api_key,
-                    max_tokens=max_tokens,
-                    reasoning_enabled=reasoning_enabled,
-                )
+                res = self._call_single_model(model, messages, max_tokens, reasoning_enabled)
                 if res:
                     return res
         return None

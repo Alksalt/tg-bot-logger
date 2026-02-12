@@ -81,10 +81,9 @@ def run_llm_agent(
             if skill_text:
                 directive += f"\n\n## Active Skill: {skill_name}\n{skill_text}"
 
-    if matched_tags:
-        registry = full_registry.filter_by_tags(matched_tags)
-    else:
-        registry = ToolRegistry()  # empty — agent answers from context only
+    # Always include core data tools so the agent can query user stats
+    matched_tags.update({"data", "stats", "history", "analytics", "insights"})
+    registry = full_registry.filter_by_tags(matched_tags)
     loaded_specs = registry.list_specs()
     loaded_tool_names = [spec["name"] for spec in loaded_specs]
 
@@ -93,6 +92,11 @@ def run_llm_agent(
         api_key=settings.openrouter_api_key,
         registry=registry,
         app_config=cfg,
+        api_keys={
+            "openai": settings.openai_api_key,
+            "google": settings.google_api_key,
+            "anthropic": settings.anthropic_api_key,
+        },
     )
     req = AgentRequest(
         question=question,

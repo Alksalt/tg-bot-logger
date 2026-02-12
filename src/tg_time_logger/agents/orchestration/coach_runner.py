@@ -115,6 +115,11 @@ def run_coach_agent(
         api_key=settings.openrouter_api_key,
         registry=registry,
         app_config=cfg,
+        api_keys={
+            "openai": settings.openai_api_key,
+            "google": settings.google_api_key,
+            "anthropic": settings.anthropic_api_key,
+        },
     )
     req = AgentRequest(
         question=message,

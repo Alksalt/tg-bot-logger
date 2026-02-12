@@ -31,8 +31,21 @@ tiers:
         provider: "openrouter"
         reasoning: false
   top_tier:
-    description: "High-quality paid models for difficult tasks."
+    description: "Direct provider APIs (free token allocations). Falls back to OpenRouter."
     models:
+      # Direct OpenAI API
+      - id: "gpt-4.1-mini"
+        provider: "openai"
+        reasoning: false
+      # Direct Google Gemini API
+      - id: "gemini-2.5-flash"
+        provider: "google"
+        reasoning: true
+      # Direct Anthropic API
+      - id: "claude-sonnet-4-5-20250929"
+        provider: "anthropic"
+        reasoning: false
+      # OpenRouter fallbacks
       - id: "openai/gpt-5.2-codex"
         provider: "openrouter"
         reasoning: true

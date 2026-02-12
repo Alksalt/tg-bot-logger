@@ -21,6 +21,9 @@ class Settings:
     admin_host: str
     admin_port: int
     openrouter_api_key: str | None
+    openai_api_key: str | None
+    google_api_key: str | None
+    anthropic_api_key: str | None
     brave_search_api_key: str | None
     tavily_api_key: str | None
     serper_api_key: str | None
@@ -92,6 +95,9 @@ def load_settings() -> Settings:
         admin_host=os.getenv("ADMIN_HOST", "127.0.0.1"),
         admin_port=admin_port,
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        google_api_key=os.getenv("GOOGLE_API_KEY"),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
         brave_search_api_key=os.getenv("BRAVE_SEARCH_API_KEY"),
         tavily_api_key=os.getenv("TAVILY_API_KEY"),
         serper_api_key=os.getenv("SERPER_API_KEY"),
