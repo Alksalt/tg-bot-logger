@@ -50,6 +50,7 @@ def run_llm_agent(
     now: datetime,
     question: str,
     tier_override: str | None = None,
+    model_preference: str | None = None,
 ) -> dict[str, Any]:
     cfg = db.get_app_config()
     if not db.is_feature_enabled("agent"):
@@ -104,6 +105,7 @@ def run_llm_agent(
         directive_text=directive,
         requested_tier=requested_tier,
         allow_tier_escalation=True,
+        model_preference=model_preference,
     )
     tool_ctx = ToolContext(
         user_id=user_id,

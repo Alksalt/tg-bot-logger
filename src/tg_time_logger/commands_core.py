@@ -463,10 +463,15 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     tier_override: str | None = None
+    model_preference: str | None = None
     question_args = context.args
     if len(context.args) >= 3 and context.args[0].lower() == "tier":
         tier_override = context.args[1].strip()
         question_args = context.args[2:]
+    elif len(context.args) >= 2 and context.args[0].lower() in ("gpt", "claude", "gemini"):
+        model_preference = context.args[0].lower()
+        tier_override = "top_tier"
+        question_args = context.args[1:]
     question = " ".join(question_args).strip()
     if not question:
         await update.effective_message.reply_text(t("llm_usage", lang))
@@ -490,6 +495,7 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         now=now,
         question=question,
         tier_override=tier_override,
+        model_preference=model_preference,
     )
     answer = str(result.get("answer", "")).strip()
     model_used = str(result.get("model", "unknown"))

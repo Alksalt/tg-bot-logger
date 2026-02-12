@@ -16,6 +16,13 @@ from tg_time_logger.agents.tools.base import ToolContext
 from tg_time_logger.agents.tools.registry import ToolRegistry
 
 
+_MODEL_VENDOR_MAP: dict[str, tuple[str, str]] = {
+    "gpt": ("openai", "openai/"),
+    "claude": ("anthropic", "anthropic/"),
+    "gemini": ("google", "google/"),
+}
+
+
 @dataclass(frozen=True)
 class AgentRequest:
     question: str
@@ -23,6 +30,7 @@ class AgentRequest:
     directive_text: str
     requested_tier: str | None
     allow_tier_escalation: bool
+    model_preference: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,12 +118,23 @@ class AgentLoop:
             return call_anthropic(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
         return None
 
+    @staticmethod
+    def _matches_preference(model: ModelSpec, preference: str | None) -> bool:
+        if not preference:
+            return True
+        vendor = _MODEL_VENDOR_MAP.get(preference)
+        if not vendor:
+            return True
+        provider, id_prefix = vendor
+        return model.provider == provider or model.id.startswith(id_prefix)
+
     def _call_models(
         self,
         messages: list[dict[str, str]],
         requested_tier: str | None,
         allow_tier_escalation: bool,
         max_tokens: int,
+        model_preference: str | None = None,
     ) -> LlmResponse | None:
         reasoning_enabled = bool(self.app_config.get("agent.reasoning_enabled", True))
         tier_order = get_tier_order(self.model_config, requested_tier, allow_tier_escalation)
@@ -124,6 +143,8 @@ class AgentLoop:
             if not tier:
                 continue
             for model in tier.models:
+                if not self._matches_preference(model, model_preference):
+                    continue
                 res = self._call_single_model(model, messages, max_tokens, reasoning_enabled)
                 if res:
                     return res
@@ -205,6 +226,7 @@ class AgentLoop:
                 req.requested_tier,
                 req.allow_tier_escalation,
                 max_tokens=output_budget,
+                model_preference=req.model_preference,
             )
             total_prompt_tokens += step_prompt_tokens
             if not llm:
@@ -311,6 +333,7 @@ class AgentLoop:
             req.requested_tier,
             req.allow_tier_escalation,
             max_tokens=min(max_step_output_tokens, remaining_total),
+            model_preference=req.model_preference,
         )
         if final and final.text.strip():
             total_completion_tokens += self._estimate_tokens(final.text)
