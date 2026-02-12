@@ -14,6 +14,7 @@ _SUPPORTED_ACTIONS = (
     "recent_entries",
     "quest_history",
     "economy_breakdown",
+    "note_keyword_sum",
 )
 
 
@@ -142,6 +143,87 @@ def _format_category_trend(ctx: ToolContext, args: dict[str, Any]) -> ToolResult
     )
 
 
+def _period_range(ctx: ToolContext, period: str) -> tuple[datetime | None, datetime | None, str]:
+    p = period.strip().lower()
+    if p in {"all", "all_time", ""}:
+        return None, None, "all-time"
+    if p == "week":
+        start = week_range_for(ctx.now).start
+        return start, ctx.now, "this week"
+    if p == "month":
+        start = _start_of_month(ctx.now)
+        return start, ctx.now, "this month"
+    if p == "last_7d":
+        start = ctx.now - timedelta(days=7)
+        return start, ctx.now, "last 7 days"
+    if p == "last_30d":
+        start = ctx.now - timedelta(days=30)
+        return start, ctx.now, "last 30 days"
+    return None, None, "all-time"
+
+
+def _format_note_keyword_sum(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    keyword = str(args.get("query", "")).strip()
+    if not keyword:
+        return ToolResult(
+            ok=False,
+            content="Missing query. Example: {\"action\":\"note_keyword_sum\",\"kind\":\"spend\",\"query\":\"anime\"}",
+            metadata={"action": "note_keyword_sum"},
+        )
+    kind = str(args.get("kind", "spend")).strip().lower()
+    if kind not in {"spend", "productive", "all"}:
+        return ToolResult(
+            ok=False,
+            content="Invalid kind. Use spend, productive, or all.",
+            metadata={"action": "note_keyword_sum", "kind": kind},
+        )
+    kind_value = None if kind == "all" else kind
+    period = str(args.get("period", "all")).strip().lower()
+    start, end, period_label = _period_range(ctx, period)
+
+    total, count = ctx.db.sum_minutes_by_note(
+        user_id=ctx.user_id,
+        note_query=keyword,
+        kind=kind_value,
+        start=start,
+        end=end,
+    )
+    examples = ctx.db.list_entries_by_note(
+        user_id=ctx.user_id,
+        note_query=keyword,
+        kind=kind_value,
+        start=start,
+        end=end,
+        limit=5,
+    )
+
+    lines = [
+        f"Keyword summary for '{keyword}' ({period_label}):",
+        f"- Kind: {'all' if kind_value is None else kind_value}",
+        f"- Total: {format_minutes_hm(total)} ({total}m)",
+        f"- Matching entries: {count}",
+    ]
+    if examples:
+        lines.append("- Recent matches:")
+        for e in examples:
+            ts = _as_local(e.created_at, ctx.now.tzinfo).strftime("%Y-%m-%d %H:%M")
+            note = (e.note or "").strip()
+            lines.append(f"  - {ts} | {e.kind} {format_minutes_hm(e.minutes)} | {note[:80]}")
+
+    return ToolResult(
+        ok=True,
+        content="\n".join(lines),
+        metadata={
+            "action": "note_keyword_sum",
+            "query": keyword,
+            "kind": kind,
+            "period": period,
+            "total_minutes": total,
+            "match_count": count,
+        },
+    )
+
+
 def _format_recent_entries(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     limit = _safe_int(args.get("limit", 10), default=10, min_value=1, max_value=50)
     entries = ctx.db.list_recent_entries(ctx.user_id, limit=limit)
@@ -221,7 +303,8 @@ class DbQueryTool(Tool):
     name = "db_query"
     description = (
         "Query user history/stats from tracker DB with structured actions. "
-        "Args: {\"action\": \"weekly_breakdown|category_trend|recent_entries|quest_history|economy_breakdown\", ...}"
+        "Args: {\"action\": \"weekly_breakdown|category_trend|recent_entries|quest_history|economy_breakdown|note_keyword_sum\", ...}. "
+        "Use note_keyword_sum for note/description-based totals, e.g. anime/youtube."
     )
     tags = ("data", "stats", "history")
 
@@ -237,6 +320,8 @@ class DbQueryTool(Tool):
             return _format_quest_history(ctx, args)
         if action == "economy_breakdown":
             return _format_economy_breakdown(ctx)
+        if action == "note_keyword_sum":
+            return _format_note_keyword_sum(ctx, args)
         return ToolResult(
             ok=False,
             content=f"Unknown action '{action}'. Supported actions: {', '.join(_SUPPORTED_ACTIONS)}",

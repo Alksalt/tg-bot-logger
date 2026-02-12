@@ -140,11 +140,12 @@ HELP_TOPICS: dict[str, str] = {
         "/llm <question>\n"
         "/llm tier <free|open_source_cheap|top_tier> <question>\n"
         "/llm models\n"
-        "Ask analytics questions based on your stats.\n"
+        "Ask analytics/data questions based on your stats and logs.\n"
         "Uses V3 agent loop with tools and tiered model routing.\n"
         "Requires OPENROUTER_API_KEY.\n\n"
         "Example:\n"
         "- /llm what should I focus on to hit level 10 faster?\n"
+        "- /llm how much did I spend on anime this week?\n"
         "- /llm tier free compare apple watch prices in norway"
     ),
     "search": (

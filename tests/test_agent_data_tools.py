@@ -50,6 +50,8 @@ def _seed(db: Database, now: datetime) -> None:
     db.add_entry(user_id=user_id, kind="productive", category="study", minutes=120, created_at=now - timedelta(days=2), note="docs")
     db.add_entry(user_id=user_id, kind="productive", category="training", minutes=90, created_at=now - timedelta(days=8), note="gym")
     db.add_entry(user_id=user_id, kind="spend", minutes=60, created_at=now - timedelta(days=1), note="gaming")
+    db.add_entry(user_id=user_id, kind="spend", minutes=40, created_at=now - timedelta(days=2), note="anime")
+    db.add_entry(user_id=user_id, kind="spend", minutes=25, created_at=now - timedelta(days=3), note="anime")
     db.insert_quest(
         user_id=user_id,
         title="Build Sprint",
@@ -102,6 +104,20 @@ def test_db_query_economy_breakdown(tmp_path) -> None:
     assert result.ok is True
     assert "Economy breakdown" in result.content
     assert "Remaining fun" in result.content
+
+
+def test_db_query_note_keyword_sum(tmp_path) -> None:
+    tool = DbQueryTool()
+    ctx = _ctx(tmp_path)
+    result = tool.run(
+        {"action": "note_keyword_sum", "kind": "spend", "query": "anime", "period": "all"},
+        ctx,
+    )
+    assert result.ok is True
+    assert "Keyword summary for 'anime'" in result.content
+    assert "65m" in result.content
+    assert result.metadata["total_minutes"] == 65
+    assert result.metadata["match_count"] == 2
 
 
 def test_insights_snapshot(tmp_path) -> None:

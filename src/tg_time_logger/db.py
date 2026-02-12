@@ -941,6 +941,75 @@ class Database:
             row = conn.execute(query, params).fetchone()
         return int(row["total"]) if row else 0
 
+    def sum_minutes_by_note(
+        self,
+        user_id: int,
+        note_query: str,
+        kind: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> tuple[int, int]:
+        query_text = note_query.strip().lower()
+        if not query_text:
+            return 0, 0
+
+        conditions = ["user_id = ?", "deleted_at IS NULL", "note IS NOT NULL", "lower(note) LIKE ?"]
+        params: list[Any] = [user_id, f"%{query_text}%"]
+        if kind is not None:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if start is not None:
+            conditions.append("created_at >= ?")
+            params.append(start.isoformat())
+        if end is not None:
+            conditions.append("created_at < ?")
+            params.append(end.isoformat())
+
+        sql = (
+            "SELECT COALESCE(SUM(minutes), 0) AS total_minutes, COUNT(*) AS match_count "
+            f"FROM entries WHERE {' AND '.join(conditions)}"
+        )
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        if not row:
+            return 0, 0
+        return int(row["total_minutes"]), int(row["match_count"])
+
+    def list_entries_by_note(
+        self,
+        user_id: int,
+        note_query: str,
+        kind: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 20,
+    ) -> list[Entry]:
+        query_text = note_query.strip().lower()
+        if not query_text:
+            return []
+
+        capped = max(1, min(int(limit), 200))
+        conditions = ["user_id = ?", "deleted_at IS NULL", "note IS NOT NULL", "lower(note) LIKE ?"]
+        params: list[Any] = [user_id, f"%{query_text}%"]
+        if kind is not None:
+            conditions.append("kind = ?")
+            params.append(kind)
+        if start is not None:
+            conditions.append("created_at >= ?")
+            params.append(start.isoformat())
+        if end is not None:
+            conditions.append("created_at < ?")
+            params.append(end.isoformat())
+
+        sql = (
+            "SELECT * FROM entries "
+            f"WHERE {' AND '.join(conditions)} "
+            "ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, [*params, capped]).fetchall()
+        return [_row_to_entry(r) for r in rows]
+
     def sum_xp(self, user_id: int, start: datetime | None = None, end: datetime | None = None) -> int:
         conditions = ["user_id = ?", "kind = 'productive'", "deleted_at IS NULL"]
         params: list[Any] = [user_id]
