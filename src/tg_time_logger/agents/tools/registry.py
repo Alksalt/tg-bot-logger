@@ -6,6 +6,7 @@ from typing import Any
 from tg_time_logger.agents.tools.base import Tool, ToolContext, ToolResult
 from tg_time_logger.agents.tools.db_query import DbQueryTool
 from tg_time_logger.agents.tools.insights import InsightsTool
+from tg_time_logger.agents.tools.memory import MemoryManageTool
 from tg_time_logger.agents.tools.notion_mcp import NotionMcpTool
 from tg_time_logger.agents.tools.quest_propose import QuestProposeTool
 from tg_time_logger.agents.tools.search import WebSearchTool
@@ -72,6 +73,7 @@ def build_default_registry() -> ToolRegistry:
     reg.register(DbQueryTool())
     reg.register(InsightsTool())
     reg.register(QuestProposeTool())
+    reg.register(MemoryManageTool())
     reg.register(NotionMcpTool())
     reg.register(StubTool(name="mail_api", description="Future mail integration tool.", tags=("communication", "mail")))
     reg.register(StubTool(name="maps_api", description="Future maps/geocoding integration tool.", tags=("maps", "location")))

@@ -9,6 +9,8 @@ from typing import Any
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES, fun_from_minutes, level_from_xp, level_up_bonus_minutes
 
 from tg_time_logger.db_models import (
+    CoachMemory,
+    CoachMessage,
     Entry,
     LevelUpEvent,
     LlmUsage,
@@ -28,6 +30,8 @@ from tg_time_logger.db_constants import (
     STREAK_MINUTES_REQUIRED,
 )
 from tg_time_logger.db_converters import (
+    _row_to_coach_memory,
+    _row_to_coach_message,
     _row_to_entry,
     _row_to_level,
     _row_to_llm_usage,
@@ -44,6 +48,7 @@ __all__ = [
     "Database",
     "Entry", "TimerSession", "UserSettings", "PlanTarget", "LevelUpEvent",
     "Streak", "Quest", "ShopItem", "SavingsGoal", "LlmUsage", "UserRule",
+    "CoachMessage", "CoachMemory",
     "DEFAULT_SHOP_ITEMS", "STREAK_MINUTES_REQUIRED", "APP_CONFIG_DEFAULTS", "JOB_CONFIG_KEYS",
 ]
 
@@ -365,6 +370,28 @@ class Database:
                         last_request_at TEXT,
                         updated_at TEXT NOT NULL
                     );
+                """,
+                18: """
+                    CREATE TABLE IF NOT EXISTS coach_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                        content TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_coach_messages_user_created
+                    ON coach_messages(user_id, created_at DESC);
+
+                    CREATE TABLE IF NOT EXISTS coach_memory (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        category TEXT NOT NULL CHECK(category IN ('preference', 'goal', 'fact', 'context')),
+                        content TEXT NOT NULL,
+                        tags TEXT,
+                        created_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_coach_memory_user_category
+                    ON coach_memory(user_id, category);
                 """,
             }
 
@@ -1822,6 +1849,110 @@ class Database:
     def clear_user_rules(self, user_id: int) -> int:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM user_rules WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount)
+
+    # -- Coach Messages (conversation history) --------------------------------
+
+    def add_coach_message(
+        self, user_id: int, role: str, content: str, created_at: datetime
+    ) -> CoachMessage:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO coach_messages(user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                (user_id, role, content.strip(), created_at.isoformat()),
+            )
+            row = conn.execute(
+                "SELECT * FROM coach_messages WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+        assert row is not None
+        return _row_to_coach_message(row)
+
+    def list_coach_messages(self, user_id: int, limit: int = 10) -> list[CoachMessage]:
+        """Return last *limit* messages in chronological order (oldest first)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT * FROM coach_messages
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                ) sub ORDER BY created_at ASC, id ASC
+                """,
+                (user_id, max(1, limit)),
+            ).fetchall()
+        return [_row_to_coach_message(r) for r in rows]
+
+    def prune_coach_messages(self, user_id: int, keep: int = 20) -> int:
+        """Delete oldest messages beyond *keep* count. Returns deleted count."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM coach_messages
+                WHERE user_id = ? AND id NOT IN (
+                    SELECT id FROM coach_messages
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (user_id, user_id, keep),
+            )
+        return int(cur.rowcount)
+
+    def clear_coach_messages(self, user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM coach_messages WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount)
+
+    # -- Coach Memory (long-term facts) ----------------------------------------
+
+    def add_coach_memory(
+        self,
+        user_id: int,
+        category: str,
+        content: str,
+        tags: str | None,
+        created_at: datetime,
+    ) -> CoachMemory:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO coach_memory(user_id, category, content, tags, created_at) VALUES (?, ?, ?, ?, ?)",
+                (user_id, category, content.strip(), tags, created_at.isoformat()),
+            )
+            row = conn.execute(
+                "SELECT * FROM coach_memory WHERE id = ?", (cur.lastrowid,)
+            ).fetchone()
+        assert row is not None
+        return _row_to_coach_memory(row)
+
+    def list_coach_memories(
+        self, user_id: int, category: str | None = None, limit: int = 50
+    ) -> list[CoachMemory]:
+        with self._connect() as conn:
+            if category:
+                rows = conn.execute(
+                    "SELECT * FROM coach_memory WHERE user_id = ? AND category = ? ORDER BY created_at DESC LIMIT ?",
+                    (user_id, category, max(1, limit)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM coach_memory WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                    (user_id, max(1, limit)),
+                ).fetchall()
+        return [_row_to_coach_memory(r) for r in rows]
+
+    def remove_coach_memory(self, user_id: int, memory_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM coach_memory WHERE user_id = ? AND id = ?",
+                (user_id, memory_id),
+            )
+        return cur.rowcount > 0
+
+    def clear_coach_memories(self, user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM coach_memory WHERE user_id = ?", (user_id,))
         return int(cur.rowcount)
 
     def has_wheel_spin(self, user_id: int, week_start: date) -> bool:

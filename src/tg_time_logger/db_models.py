@@ -122,3 +122,22 @@ class UserRule:
     user_id: int
     rule_text: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class CoachMessage:
+    id: int
+    user_id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class CoachMemory:
+    id: int
+    user_id: int
+    category: str
+    content: str
+    tags: str | None
+    created_at: datetime

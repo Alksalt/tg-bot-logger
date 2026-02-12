@@ -4,6 +4,8 @@ import sqlite3
 from datetime import date, datetime
 
 from tg_time_logger.db_models import (
+    CoachMemory,
+    CoachMessage,
     Entry,
     LevelUpEvent,
     LlmUsage,
@@ -137,5 +139,26 @@ def _row_to_user_rule(row: sqlite3.Row) -> UserRule:
         id=int(row["id"]),
         user_id=int(row["user_id"]),
         rule_text=str(row["rule_text"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_coach_message(row: sqlite3.Row) -> CoachMessage:
+    return CoachMessage(
+        id=int(row["id"]),
+        user_id=int(row["user_id"]),
+        role=str(row["role"]),
+        content=str(row["content"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_coach_memory(row: sqlite3.Row) -> CoachMemory:
+    return CoachMemory(
+        id=int(row["id"]),
+        user_id=int(row["user_id"]),
+        category=str(row["category"]),
+        content=str(row["content"]),
+        tags=row["tags"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
