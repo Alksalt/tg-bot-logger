@@ -57,6 +57,13 @@ _RULES: list[tuple[re.Pattern[str], set[str]]] = [
         ),
         {"analytics", "insights"},
     ),
+    (
+        re.compile(
+            r"\b(todo|to-do|task|plan my day|add task|checklist|to do list)\b",
+            re.IGNORECASE,
+        ),
+        {"todo", "task", "productivity"},
+    ),
 ]
 
 

@@ -10,6 +10,7 @@ from tg_time_logger.agents.tools.memory import MemoryManageTool
 from tg_time_logger.agents.tools.notion_mcp import NotionMcpTool
 from tg_time_logger.agents.tools.quest_propose import QuestProposeTool
 from tg_time_logger.agents.tools.search import WebSearchTool
+from tg_time_logger.agents.tools.todo import TodoManageTool
 
 
 @dataclass
@@ -75,6 +76,7 @@ def build_default_registry() -> ToolRegistry:
     reg.register(QuestProposeTool())
     reg.register(MemoryManageTool())
     reg.register(NotionMcpTool())
+    reg.register(TodoManageTool())
     reg.register(StubTool(name="mail_api", description="Future mail integration tool.", tags=("communication", "mail")))
     reg.register(StubTool(name="maps_api", description="Future maps/geocoding integration tool.", tags=("maps", "location")))
     reg.register(StubTool(name="custom_http_api", description="Future generic app API connector tool.", tags=("http", "api")))

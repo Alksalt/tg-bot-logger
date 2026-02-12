@@ -14,7 +14,7 @@ from tg_time_logger.help_guides import (
 ALL_COMMANDS = [
     "log", "spend", "status", "week", "undo", "plan", "start", "stop",
     "quests", "shop", "redeem", "save", "rules", "llm", "coach", "search",
-    "lang", "reminders", "quiet_hours", "freeze", "help",
+    "lang", "reminders", "quiet_hours", "freeze", "todo", "help",
 ]
 
 
@@ -50,7 +50,7 @@ def test_no_empty_pages() -> None:
 
 
 def test_guide_topic_count() -> None:
-    assert len(GUIDE_PAGES) == 7
+    assert len(GUIDE_PAGES) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ def test_get_guide_page_invalid_topic() -> None:
 def test_list_guide_topics_sorted() -> None:
     topics = list_guide_topics()
     assert topics == sorted(topics)
-    assert len(topics) == 7
+    assert len(topics) == 8
 
 
 def test_resolve_guide_topic_direct() -> None:

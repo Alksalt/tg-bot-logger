@@ -142,3 +142,16 @@ class CoachMemory:
     content: str
     tags: str | None
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class TodoItem:
+    id: int
+    user_id: int
+    plan_date: str
+    title: str
+    duration_minutes: int | None
+    status: str
+    position: int
+    completed_at: datetime | None
+    created_at: datetime

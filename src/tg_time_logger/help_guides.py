@@ -25,6 +25,7 @@ COMMAND_DESCRIPTIONS: dict[str, str] = {
     "reminders": "Toggle reminder notifications",
     "quiet_hours": "Set do-not-disturb window for reminders",
     "freeze": "Buy a streak freeze for tomorrow",
+    "todo": "Daily to-do list with auto-logging",
     "help": "Show help or detailed command docs",
 }
 
@@ -189,6 +190,23 @@ HELP_TOPICS: dict[str, str] = {
         "/freeze\n"
         "Buys tomorrow streak freeze for 200 fun minutes."
     ),
+    "todo": (
+        "/todo\n"
+        "/todo tomorrow\n"
+        "/todo add [duration] <title>\n"
+        "/todo done <id>\n"
+        "/todo rm <id>\n"
+        "/todo clear\n\n"
+        "Daily to-do list with inline tick buttons.\n"
+        "Tasks with duration auto-suggest a log category when done.\n\n"
+        "Also works via LLM:\n"
+        "- /llm todo add training 1h for tomorrow\n"
+        "- /llm todo plan my day: 2h coding, 1h gym\n\n"
+        "Examples:\n"
+        "- /todo add 2h improve tg bot\n"
+        "- /todo add training\n"
+        "- /todo tomorrow"
+    ),
     "help": (
         "/help\n"
         "/help <command>\n"
@@ -229,6 +247,9 @@ TOPIC_ALIASES: dict[str, str] = {
     "language": "settings",
     "rules": "settings",
     "freeze": "settings",
+    "todo": "todo",
+    "todos": "todo",
+    "tasks": "todo",
 }
 
 
@@ -244,6 +265,7 @@ GUIDE_TITLES: dict[str, str] = {
     "search": "Web Search Guide",
     "settings": "Settings Guide",
     "shop": "Shop & Economy Guide",
+    "todo": "To-Do List Guide",
 }
 
 
@@ -1455,6 +1477,119 @@ _SETTINGS_PAGES: list[str] = [
 ]
 
 
+_TODO_PAGES: list[str] = [
+    # Page 1: What is /todo?
+    (
+        "What is /todo?\n"
+        "\n"
+        "The to-do list is a daily task planner built into the bot. "
+        "You can plan your day, set tasks with optional durations, and "
+        "tick them off when done.\n"
+        "\n"
+        "Key features:\n"
+        "- Plan tasks for today or tomorrow\n"
+        "- Add optional durations (2h, 30m, etc.)\n"
+        "- Tick off tasks with inline buttons\n"
+        "- Auto-suggest logging when a task with duration is completed\n"
+        "- Also works through /llm for natural language input\n"
+        "\n"
+        "Quick start:\n"
+        "  /todo add 2h improve tg bot\n"
+        "  /todo add 1h training\n"
+        "  /todo add meeting with boss\n"
+        "  /todo\n"
+        "\n"
+        "The last command shows your list with tick buttons."
+    ),
+    # Page 2: Adding tasks
+    (
+        "Adding tasks\n"
+        "\n"
+        "Basic format:\n"
+        "  /todo add [duration] <title>\n"
+        "\n"
+        "Duration goes first (optional). If recognized as a time "
+        "value, it is stored separately. Everything after is the title.\n"
+        "\n"
+        "Examples:\n"
+        "  /todo add 2h improve tg bot\n"
+        "     -> title: 'improve tg bot', duration: 2h\n"
+        "\n"
+        "  /todo add training\n"
+        "     -> title: 'training', no duration\n"
+        "\n"
+        "  /todo add 30m morning walk\n"
+        "     -> title: 'morning walk', duration: 30m\n"
+        "\n"
+        "Tasks are added to today by default.\n"
+        "\n"
+        "Via LLM (natural language):\n"
+        "  /llm todo add training 1h for tomorrow\n"
+        "  /llm todo plan my day: 2h coding, 1h gym, meeting\n"
+        "\n"
+        "The LLM agent can add multiple items in one message and "
+        "understands 'today', 'tomorrow', or specific dates."
+    ),
+    # Page 3: Completing tasks
+    (
+        "Completing tasks\n"
+        "\n"
+        "When you type /todo, you see your list with tick buttons:\n"
+        "\n"
+        "  Plan for 13.02 (0/3):\n"
+        "  1. ⬜ improve tg bot (2h)\n"
+        "  2. ⬜ training (1h)\n"
+        "  3. ⬜ meeting with boss\n"
+        "  [✅1] [✅2] [✅3]\n"
+        "\n"
+        "Tap a button to mark it done. The list updates in-place.\n"
+        "\n"
+        "Auto-categorize:\n"
+        "If the task has a duration, the bot calls the AI to suggest "
+        "a log category (study/build/training/other) and sends:\n"
+        "\n"
+        "  ✅ training (1h) — done!\n"
+        "  Log as 60m training?\n"
+        "  [Accept] [Decline]\n"
+        "\n"
+        "- Accept: logs the time entry automatically\n"
+        "- Decline: nothing logged, task stays marked done\n"
+        "\n"
+        "Tasks without duration are simply marked done with "
+        "no logging suggestion.\n"
+        "\n"
+        "You can also use: /todo done <id>"
+    ),
+    # Page 4: Quick reference
+    (
+        "Quick reference\n"
+        "\n"
+        "Commands:\n"
+        "  /todo              Show today's list\n"
+        "  /todo tomorrow     Show tomorrow's list\n"
+        "  /todo add <title>  Add task (today)\n"
+        "  /todo add 2h <t>   Add with duration\n"
+        "  /todo done <id>    Mark done by ID\n"
+        "  /todo rm <id>      Delete a task\n"
+        "  /todo clear        Clear pending tasks\n"
+        "\n"
+        "Via LLM:\n"
+        "  /llm todo add ...     Add via natural language\n"
+        "  /llm todo show tomorrow  List tasks\n"
+        "\n"
+        "Auto-log flow:\n"
+        "  Tick task -> AI suggests category -> Accept/Decline\n"
+        "  Categories: study, build, training, other\n"
+        "\n"
+        "Notes:\n"
+        "- Duration is optional but needed for auto-logging\n"
+        "- Tasks are per-date (today/tomorrow)\n"
+        "- Job category is not auto-suggested (log manually)\n"
+        "- /todo clear only removes pending tasks, not done"
+    ),
+]
+
+
 GUIDE_PAGES: dict[str, list[str]] = {
     "coach": _COACH_PAGES,
     "llm": _LLM_PAGES,
@@ -1463,6 +1598,7 @@ GUIDE_PAGES: dict[str, list[str]] = {
     "search": _SEARCH_PAGES,
     "settings": _SETTINGS_PAGES,
     "shop": _SHOP_PAGES,
+    "todo": _TODO_PAGES,
 }
 
 

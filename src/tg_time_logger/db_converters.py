@@ -15,6 +15,7 @@ from tg_time_logger.db_models import (
     ShopItem,
     Streak,
     TimerSession,
+    TodoItem,
     UserRule,
 )
 
@@ -160,5 +161,19 @@ def _row_to_coach_memory(row: sqlite3.Row) -> CoachMemory:
         category=str(row["category"]),
         content=str(row["content"]),
         tags=row["tags"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def _row_to_todo(row: sqlite3.Row) -> TodoItem:
+    return TodoItem(
+        id=int(row["id"]),
+        user_id=int(row["user_id"]),
+        plan_date=str(row["plan_date"]),
+        title=str(row["title"]),
+        duration_minutes=int(row["duration_minutes"]) if row["duration_minutes"] is not None else None,
+        status=str(row["status"]),
+        position=int(row["position"]),
+        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
         created_at=datetime.fromisoformat(row["created_at"]),
     )

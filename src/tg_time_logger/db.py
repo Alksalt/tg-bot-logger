@@ -20,6 +20,7 @@ from tg_time_logger.db_models import (
     ShopItem,
     Streak,
     TimerSession,
+    TodoItem,
     UserRule,
     UserSettings,
 )
@@ -41,6 +42,7 @@ from tg_time_logger.db_converters import (
     _row_to_shop_item,
     _row_to_streak,
     _row_to_timer,
+    _row_to_todo,
     _row_to_user_rule,
 )
 
@@ -48,7 +50,7 @@ __all__ = [
     "Database",
     "Entry", "TimerSession", "UserSettings", "PlanTarget", "LevelUpEvent",
     "Streak", "Quest", "ShopItem", "SavingsGoal", "LlmUsage", "UserRule",
-    "CoachMessage", "CoachMemory",
+    "CoachMessage", "CoachMemory", "TodoItem",
     "DEFAULT_SHOP_ITEMS", "STREAK_MINUTES_REQUIRED", "APP_CONFIG_DEFAULTS", "JOB_CONFIG_KEYS",
 ]
 
@@ -396,6 +398,21 @@ class Database:
                 19: """
                     ALTER TABLE user_settings
                     ADD COLUMN preferred_tier TEXT;
+                """,
+                20: """
+                    CREATE TABLE IF NOT EXISTS todo_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        plan_date TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        duration_minutes INTEGER,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        position INTEGER NOT NULL DEFAULT 0,
+                        completed_at TEXT,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_todo_items_user_date
+                    ON todo_items(user_id, plan_date);
                 """,
             }
 
@@ -1991,3 +2008,73 @@ class Database:
                 (user_id, week_start.isoformat(), result_fun_minutes, spun_at.isoformat()),
             )
         return cur.rowcount > 0
+
+    # ── Todo items ────────────────────────────────────────────────
+
+    def next_todo_position(self, user_id: int, plan_date: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(position) AS mx FROM todo_items WHERE user_id = ? AND plan_date = ?",
+                (user_id, plan_date),
+            ).fetchone()
+        if row and row["mx"] is not None:
+            return int(row["mx"]) + 1
+        return 0
+
+    def add_todo(
+        self,
+        user_id: int,
+        plan_date: str,
+        title: str,
+        duration_minutes: int | None,
+        position: int,
+        now: datetime,
+    ) -> TodoItem:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO todo_items(user_id, plan_date, title, duration_minutes, position, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (user_id, plan_date, title, duration_minutes, position, now.isoformat()),
+            )
+            row = conn.execute("SELECT * FROM todo_items WHERE id = ?", (cur.lastrowid,)).fetchone()
+        assert row is not None
+        return _row_to_todo(row)
+
+    def list_todos(self, user_id: int, plan_date: str) -> list[TodoItem]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM todo_items WHERE user_id = ? AND plan_date = ? ORDER BY position ASC",
+                (user_id, plan_date),
+            ).fetchall()
+        return [_row_to_todo(r) for r in rows]
+
+    def get_todo(self, todo_id: int) -> TodoItem | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM todo_items WHERE id = ?", (todo_id,)).fetchone()
+        return _row_to_todo(row) if row else None
+
+    def mark_todo_done(self, todo_id: int, now: datetime) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE todo_items SET status = 'done', completed_at = ? WHERE id = ? AND status = 'pending'",
+                (now.isoformat(), todo_id),
+            )
+        return cur.rowcount > 0
+
+    def delete_todo(self, user_id: int, todo_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM todo_items WHERE id = ? AND user_id = ?",
+                (todo_id, user_id),
+            )
+        return cur.rowcount > 0
+
+    def clear_pending_todos(self, user_id: int, plan_date: str) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM todo_items WHERE user_id = ? AND plan_date = ? AND status = 'pending'",
+                (user_id, plan_date),
+            )
+        return int(cur.rowcount)
