@@ -6,7 +6,7 @@ from typing import Any
 
 from tg_time_logger.agents.execution.config import load_model_config
 from tg_time_logger.agents.execution.loop import AgentLoop, AgentRequest
-from tg_time_logger.agents.orchestration.intent_router import resolve_intent_tags
+from tg_time_logger.agents.orchestration.intent_router import SKILL_DEFS, resolve_intent
 from tg_time_logger.agents.tools.base import ToolContext
 from tg_time_logger.agents.tools.registry import ToolRegistry, build_default_registry
 from tg_time_logger.config import Settings
@@ -20,6 +20,13 @@ def _load_directive(path: Path) -> str:
         if text:
             return text
     return "Be accurate, concise, and use tools only when needed."
+
+
+def _load_skill_directive(path: Path) -> str | None:
+    if path.exists():
+        text = path.read_text().strip()
+        return text if text else None
+    return None
 
 
 def build_agent_context_text(db: Database, user_id: int, now: datetime) -> str:
@@ -60,7 +67,20 @@ def run_llm_agent(
 
     # Two-phase tool resolution: only load tools relevant to the question
     full_registry = build_default_registry()
-    matched_tags = resolve_intent_tags(question)
+    intent = resolve_intent(question)
+    matched_tags = set(intent.tool_tags)
+    matched_skills = list(intent.skills)
+
+    # Merge skill-required tool tags + compose skill directive fragments
+    directives_dir = settings.agent_directive_path.parent
+    for skill_name in matched_skills:
+        skill_def = SKILL_DEFS.get(skill_name)
+        if skill_def:
+            matched_tags.update(skill_def.required_tool_tags)
+            skill_text = _load_skill_directive(directives_dir / skill_def.directive_file)
+            if skill_text:
+                directive += f"\n\n## Active Skill: {skill_name}\n{skill_text}"
+
     if matched_tags:
         registry = full_registry.filter_by_tags(matched_tags)
     else:
@@ -103,6 +123,7 @@ def run_llm_agent(
             "prompt_tokens": result.prompt_tokens,
             "completion_tokens": result.completion_tokens,
             "matched_tags": sorted(matched_tags),
+            "matched_skills": matched_skills,
             "loaded_tools_count": len(loaded_tool_names),
             "loaded_tools": loaded_tool_names,
             "question_length": len(question),
@@ -123,6 +144,7 @@ def run_llm_agent(
         "prompt_tokens": result.prompt_tokens,
         "completion_tokens": result.completion_tokens,
         "matched_tags": sorted(matched_tags),
+        "matched_skills": matched_skills,
         "loaded_tools_count": len(loaded_tool_names),
         "loaded_tools": loaded_tool_names,
     }

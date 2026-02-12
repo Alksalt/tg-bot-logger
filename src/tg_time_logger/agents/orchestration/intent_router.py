@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 
 # Each rule maps a regex pattern to a set of tool tags.
 # All matching rules are unioned so a question like
@@ -59,17 +60,96 @@ _RULES: list[tuple[re.Pattern[str], set[str]]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Skills: lazy-loaded directive fragments activated by intent matching
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SkillDef:
+    """A skill enriches the agent prompt with a focused directive fragment."""
+
+    name: str
+    directive_file: str  # relative to directives dir (e.g. "skills/quest_builder.md")
+    required_tool_tags: frozenset[str]  # auto-merged into tool_tags
+
+
+@dataclass(frozen=True)
+class IntentResult:
+    """Combined output of intent resolution: tool tags + matched skills."""
+
+    tool_tags: set[str] = field(default_factory=set)
+    skills: list[str] = field(default_factory=list)
+
+
+SKILL_DEFS: dict[str, SkillDef] = {
+    "quest_builder": SkillDef(
+        name="quest_builder",
+        directive_file="skills/quest_builder.md",
+        required_tool_tags=frozenset({"data", "stats", "history", "quest", "gamification"}),
+    ),
+    "research": SkillDef(
+        name="research",
+        directive_file="skills/research.md",
+        required_tool_tags=frozenset({"search", "web"}),
+    ),
+    "coach": SkillDef(
+        name="coach",
+        directive_file="skills/coach.md",
+        required_tool_tags=frozenset({"data", "stats", "history", "analytics", "insights"}),
+    ),
+}
+
+
+_SKILL_RULES: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"\b(quest|challenge|generate quest|new quest|suggest quest|create quest)\b",
+            re.IGNORECASE,
+        ),
+        "quest_builder",
+    ),
+    (
+        re.compile(
+            r"\b(research|deep search|investigate|find out about|compare options)\b",
+            re.IGNORECASE,
+        ),
+        "research",
+    ),
+    (
+        re.compile(
+            r"\b(coach|strategy|advice|plan my|recommend|prioritize|what should I)\b",
+            re.IGNORECASE,
+        ),
+        "coach",
+    ),
+]
+
+
 def resolve_intent_tags(question: str) -> set[str]:
     """Return the union of all tool tags matching the user's question.
 
     If no rules match, returns an empty set — the agent will answer
     from context alone with no tools available.
+
+    Kept for backward compatibility. Prefer :func:`resolve_intent`.
     """
+    return resolve_intent(question).tool_tags
+
+
+def resolve_intent(question: str) -> IntentResult:
+    """Return tool tags *and* matched skill names for a user question."""
     tags: set[str] = set()
+    skills: list[str] = []
     q = question.strip()
     if not q:
-        return tags
+        return IntentResult(tool_tags=tags, skills=skills)
     for pattern, rule_tags in _RULES:
         if pattern.search(q):
             tags.update(rule_tags)
-    return tags
+    seen_skills: set[str] = set()
+    for pattern, skill_name in _SKILL_RULES:
+        if pattern.search(q) and skill_name not in seen_skills:
+            skills.append(skill_name)
+            seen_skills.add(skill_name)
+    return IntentResult(tool_tags=tags, skills=skills)
