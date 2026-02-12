@@ -31,155 +31,6 @@ LLM_DAILY_LIMIT = 10
 LLM_COOLDOWN_SECONDS = 30
 
 
-HELP_TOPICS: dict[str, str] = {
-    "overview": (
-        "Available commands:\n"
-        "/log, /spend, /status, /week, /undo\n"
-        "/plan, /start, /stop\n"
-        "/quests, /shop, /redeem, /save\n"
-        "/rules, /llm, /search, /lang, /reminders, /quiet_hours, /freeze\n"
-        "/help [command]\n\n"
-        "Examples:\n"
-        "/help log\n"
-        "/help save\n"
-        "/help shop"
-    ),
-    "log": (
-        "/log <duration> [study|build|training|job] [note]\n"
-        "Logs productive time.\n\n"
-        "Duration examples:\n"
-        "- /log 90m\n"
-        "- /log 1.5h build API refactor\n"
-        "- /log 1h20m study chapter 3\n"
-        "- /log 45 training"
-    ),
-    "spend": (
-        "/spend <duration> [note]\n"
-        "Logs fun consumption time.\n\n"
-        "Examples:\n"
-        "- /spend 40m YouTube\n"
-        "- /spend 2h movie night"
-    ),
-    "status": (
-        "/status\n"
-        "Shows level, XP, streak, week totals, plan progress, economy, and active quest count."
-    ),
-    "week": (
-        "/week\n"
-        "Shows this week summary (productive, spent, plan progress, XP, deep sessions, fun remaining)."
-    ),
-    "undo": (
-        "/undo\n"
-        "Soft-deletes your last entry (productive or spend)."
-    ),
-    "plan": (
-        "/plan set <duration>\n"
-        "/plan show\n"
-        "Sets or shows this week target.\n\n"
-        "Examples:\n"
-        "- /plan set 20h\n"
-        "- /plan show"
-    ),
-    "start": (
-        "/start [study|build|training|job|spend] [note]\n"
-        "Starts a timer session.\n\n"
-        "Example:\n"
-        "- /start build backend cleanup\n"
-        "- /start spend games"
-    ),
-    "stop": (
-        "/stop\n"
-        "Stops active timer and logs elapsed minutes.\n"
-        "Productive timers give XP/fun; spend timers log fun spend."
-    ),
-    "quests": (
-        "/quests\n"
-        "/quests history\n"
-        "Shows active quests or this-week quest history."
-    ),
-    "shop": (
-        "/shop\n"
-        "/shop add <emoji> \"name\" <cost_duration_or_minutes> [nok_value]\n"
-        "/shop add <emoji> \"name\" <nok_value>nok\n"
-        "/shop price <emoji> \"name\" <search_query>\n"
-        "/shop price <emoji> \"name\" <search_query> --add\n"
-        "/shop remove <item_id>\n"
-        "/shop budget <minutes|off>\n\n"
-        "Examples:\n"
-        "- /shop add ⌚ \"Apple Watch\" 15000m\n"
-        "- /shop add ⌚ \"Apple Watch\" 4990nok\n"
-        "- /shop price ⌚ \"Apple Watch\" apple watch price norway\n"
-        "- /shop price ⌚ \"Apple Watch\" apple watch price norway --add\n"
-        "- /shop add 🎧 \"AirPods\" 4000 2490\n"
-        "- /shop remove 12"
-    ),
-    "redeem": (
-        "/redeem <item_id|item_name>\n"
-        "/redeem history\n\n"
-        "Redeem uses savings fund first, then remaining fun minutes."
-    ),
-    "save": (
-        "/save\n"
-        "/save goal <duration> [name]\n"
-        "/save fund <duration>\n\n"
-        "/save sunday on 50|60|70\n"
-        "/save sunday off\n\n"
-        "Simple flow:\n"
-        "1) Add into fund directly: /save fund 200m\n"
-        "2) Optional goal: /save goal 2000m Device fund\n"
-        "Fund is locked for shop redemptions."
-    ),
-    "rules": (
-        "/rules\n"
-        "/rules add <text>\n"
-        "/rules remove <id>\n"
-        "/rules clear\n\n"
-        "Personal rulebook/notes for yourself. It does not change system logic."
-    ),
-    "llm": (
-        "/llm <question>\n"
-        "/llm tier <free|open_source_cheap|top_tier> <question>\n"
-        "/llm models\n"
-        "Ask analytics/data questions based on your stats and logs.\n"
-        "Uses V3 agent loop with tools and tiered model routing.\n"
-        "Requires OPENROUTER_API_KEY.\n\n"
-        "Example:\n"
-        "- /llm what should I focus on to hit level 10 faster?\n"
-        "- /llm how much did I spend on anime this week?\n"
-        "- /llm tier free compare apple watch prices in norway"
-    ),
-    "search": (
-        "/search <query>\n"
-        "Runs web search tool (Brave -> Tavily -> Serper fallback) with cache + dedupe.\n\n"
-        "Example:\n"
-        "- /search apple watch ultra 2 price norway"
-    ),
-    "lang": (
-        "/lang\n"
-        "/lang <en|uk>\n"
-        "Shows or sets your preferred bot language (English/Ukrainian)."
-    ),
-    "reminders": (
-        "/reminders on\n"
-        "/reminders off\n"
-        "Turns reminder notifications on or off."
-    ),
-    "quiet_hours": (
-        "/quiet_hours HH:MM-HH:MM\n"
-        "Suppress reminders inside this window.\n"
-        "Example: /quiet_hours 22:00-08:00"
-    ),
-    "freeze": (
-        "/freeze\n"
-        "Buys tomorrow streak freeze for 200 fun minutes."
-    ),
-    "help": (
-        "/help\n"
-        "/help <command>\n"
-        "Shows global help or detailed docs for one command."
-    ),
-}
-
 
 async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
@@ -283,23 +134,6 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = get_user_language(context, user_id)
     view = compute_status(db, user_id, now)
     await update.effective_message.reply_text(week_message(view, lang=lang), reply_markup=build_keyboard())
-
-
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id, _, _ = touch_user(update, context)
-    lang = get_user_language(context, user_id)
-    if not context.args:
-        await update.effective_message.reply_text(HELP_TOPICS["overview"])
-        return
-
-    topic = context.args[0].strip().lower().lstrip("/")
-    text = HELP_TOPICS.get(topic)
-    if not text:
-        await update.effective_message.reply_text(
-            localize(lang, "No detailed help for '{topic}'. Try /help to see all commands.", "Немає детальної довідки для '{topic}'. Використай /help для списку команд.", topic=topic)
-        )
-        return
-    await update.effective_message.reply_text(text)
 
 
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -850,7 +684,6 @@ async def handle_unknown_command(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def register_core_handlers(app: Application) -> None:
-    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("log", cmd_log))
     app.add_handler(CommandHandler("spend", cmd_spend))
     app.add_handler(CommandHandler("status", cmd_status))
