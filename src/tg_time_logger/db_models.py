@@ -38,6 +38,7 @@ class UserSettings:
     auto_save_minutes: int
     sunday_fund_percent: int
     language_code: str
+    preferred_tier: str | None
 
 
 @dataclass(frozen=True)

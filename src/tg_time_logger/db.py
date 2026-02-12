@@ -393,6 +393,10 @@ class Database:
                     CREATE INDEX IF NOT EXISTS idx_coach_memory_user_category
                     ON coach_memory(user_id, category);
                 """,
+                19: """
+                    ALTER TABLE user_settings
+                    ADD COLUMN preferred_tier TEXT;
+                """,
             }
 
             now = datetime.now().isoformat(timespec="seconds")
@@ -477,7 +481,8 @@ class Database:
             row = conn.execute(
                 """
                 SELECT user_id, reminders_enabled, daily_goal_minutes, quiet_hours,
-                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent, language_code
+                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent,
+                       language_code, preferred_tier
                 FROM user_settings WHERE user_id = ?
                 """,
                 (user_id,),
@@ -492,6 +497,7 @@ class Database:
             auto_save_minutes=int(row["auto_save_minutes"] or 0),
             sunday_fund_percent=int(row["sunday_fund_percent"] or 0),
             language_code=str(row["language_code"] or "en"),
+            preferred_tier=row["preferred_tier"],
         )
 
     def update_reminders_enabled(self, user_id: int, enabled: bool) -> None:
@@ -534,6 +540,14 @@ class Database:
             conn.execute(
                 "UPDATE user_settings SET sunday_fund_percent = ? WHERE user_id = ?",
                 (normalized, user_id),
+            )
+
+    def update_preferred_tier(self, user_id: int, tier: str | None) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)", (user_id,))
+            conn.execute(
+                "UPDATE user_settings SET preferred_tier = ? WHERE user_id = ?",
+                (tier, user_id),
             )
 
     def update_language_code(self, user_id: int, language_code: str) -> None:

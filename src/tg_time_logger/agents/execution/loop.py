@@ -104,19 +104,23 @@ class AgentLoop:
         messages: list[dict[str, str]],
         max_tokens: int,
         reasoning_enabled: bool,
-    ) -> LlmResponse | None:
+    ) -> tuple[LlmResponse | None, str]:
+        """Returns (response, failure_reason). failure_reason is '' on success."""
         key = self._get_provider_key(model.provider)
         if not key:
-            return None
+            return None, f"{model.id}: no API key for {model.provider}"
+        res: LlmResponse | None = None
         if model.provider == "openrouter":
-            return call_openrouter(model=model, messages=messages, api_key=key, max_tokens=max_tokens, reasoning_enabled=reasoning_enabled)
-        if model.provider == "openai":
-            return call_openai(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
-        if model.provider == "google":
-            return call_google(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
-        if model.provider == "anthropic":
-            return call_anthropic(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
-        return None
+            res = call_openrouter(model=model, messages=messages, api_key=key, max_tokens=max_tokens, reasoning_enabled=reasoning_enabled)
+        elif model.provider == "openai":
+            res = call_openai(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        elif model.provider == "google":
+            res = call_google(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        elif model.provider == "anthropic":
+            res = call_anthropic(model=model, messages=messages, api_key=key, max_tokens=max_tokens)
+        if res:
+            return res, ""
+        return None, f"{model.id}: API call failed"
 
     @staticmethod
     def _matches_preference(model: ModelSpec, preference: str | None) -> bool:
@@ -135,9 +139,11 @@ class AgentLoop:
         allow_tier_escalation: bool,
         max_tokens: int,
         model_preference: str | None = None,
-    ) -> LlmResponse | None:
+    ) -> tuple[LlmResponse | None, list[str]]:
+        """Returns (response, failure_reasons). failure_reasons empty on success."""
         reasoning_enabled = bool(self.app_config.get("agent.reasoning_enabled", True))
         tier_order = get_tier_order(self.model_config, requested_tier, allow_tier_escalation)
+        failures: list[str] = []
         for tier_name in tier_order:
             tier = self.model_config.get_tier(tier_name)
             if not tier:
@@ -145,10 +151,12 @@ class AgentLoop:
             for model in tier.models:
                 if not self._matches_preference(model, model_preference):
                     continue
-                res = self._call_single_model(model, messages, max_tokens, reasoning_enabled)
+                res, reason = self._call_single_model(model, messages, max_tokens, reasoning_enabled)
                 if res:
-                    return res
-        return None
+                    return res, []
+                if reason:
+                    failures.append(reason)
+        return None, failures
 
     def run(self, req: AgentRequest, ctx: ToolContext) -> AgentRunResult:
         max_steps = get_int(self.app_config, "agent.max_steps", default=6, min_value=1)
@@ -221,7 +229,7 @@ class AgentLoop:
                 )
 
             output_budget = min(max_step_output_tokens, remaining_total)
-            llm = self._call_models(
+            llm, call_failures = self._call_models(
                 messages,
                 req.requested_tier,
                 req.allow_tier_escalation,
@@ -230,8 +238,10 @@ class AgentLoop:
             )
             total_prompt_tokens += step_prompt_tokens
             if not llm:
+                hint = "; ".join(call_failures[:3]) if call_failures else "no models matched"
+                steps.append({"type": "model_failures", "reasons": call_failures})
                 return AgentRunResult(
-                    answer="Agent is unavailable right now (model call failed).",
+                    answer=f"Agent is unavailable right now ({hint}).",
                     model_used="none",
                     steps=steps,
                     prompt_tokens=total_prompt_tokens,
@@ -328,7 +338,7 @@ class AgentLoop:
                 completion_tokens=total_completion_tokens,
                 status="budget_blocked",
             )
-        final = self._call_models(
+        final, _ = self._call_models(
             fallback_messages,
             req.requested_tier,
             req.allow_tier_escalation,

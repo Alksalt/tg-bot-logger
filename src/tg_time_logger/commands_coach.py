@@ -33,7 +33,13 @@ async def cmd_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                      "Середовище агента зараз вимкнено адміністратором.")
         )
         return
-    if not settings.openrouter_api_key:
+    has_any_key = (
+        settings.openrouter_api_key
+        or settings.openai_api_key
+        or settings.google_api_key
+        or settings.anthropic_api_key
+    )
+    if not has_any_key:
         await update.effective_message.reply_text(t("llm_disabled_key", lang))
         return
 
@@ -61,6 +67,43 @@ async def cmd_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text("\n".join(lines))
         return
 
+    if context.args and context.args[0].lower() == "tier":
+        valid_tiers = ("free", "open_source_cheap", "top_tier")
+        if len(context.args) < 2:
+            user_settings = db.get_settings(user_id)
+            current = user_settings.preferred_tier or "default"
+            await update.effective_message.reply_text(
+                localize(lang,
+                         f"Current tier: {current}\n\n"
+                         f"Set with: /coach tier <{'|'.join(valid_tiers)}>\n"
+                         "Reset to default: /coach tier default",
+                         f"Поточний рівень: {current}\n\n"
+                         f"Встановити: /coach tier <{'|'.join(valid_tiers)}>\n"
+                         "Скинути: /coach tier default")
+            )
+            return
+        requested = context.args[1].strip().lower()
+        if requested == "default":
+            db.update_preferred_tier(user_id, None)
+            await update.effective_message.reply_text(
+                localize(lang, "Tier reset to default.", "Рівень скинуто до стандартного.")
+            )
+            return
+        if requested not in valid_tiers:
+            await update.effective_message.reply_text(
+                localize(lang,
+                         f"Unknown tier. Choose: {', '.join(valid_tiers)}",
+                         f"Невідомий рівень. Обери: {', '.join(valid_tiers)}")
+            )
+            return
+        db.update_preferred_tier(user_id, requested)
+        await update.effective_message.reply_text(
+            localize(lang,
+                     f"Tier set to {requested}. All /coach and /llm requests will use it.",
+                     f"Рівень встановлено: {requested}. Усі запити /coach і /llm використовуватимуть його.")
+        )
+        return
+
     if context.args and context.args[0].lower() == "forget":
         if len(context.args) < 2 or not context.args[1].isdigit():
             await update.effective_message.reply_text(
@@ -85,12 +128,14 @@ async def cmd_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "Subcommands:\n"
                 "/coach clear - clear conversation history\n"
                 "/coach memory - view saved memories\n"
-                "/coach forget <id> - remove a memory",
+                "/coach forget <id> - remove a memory\n"
+                "/coach tier - view/set model tier (persists)",
                 "Використання: /coach <повідомлення>\n\n"
                 "Підкоманди:\n"
                 "/coach clear - очистити історію розмови\n"
                 "/coach memory - переглянути збережені спогади\n"
-                "/coach forget <id> - видалити спогад",
+                "/coach forget <id> - видалити спогад\n"
+                "/coach tier - переглянути/встановити рівень моделі",
             )
         )
         return
@@ -120,12 +165,14 @@ async def cmd_coach(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         localize(lang, "Thinking...", "Думаю...")
     )
 
+    user_settings = db.get_settings(user_id)
     result = run_coach_agent(
         db=db,
         settings=settings,
         user_id=user_id,
         now=now,
         message=message,
+        tier_override=user_settings.preferred_tier,
     )
 
     answer = str(result.get("answer", "")).strip()

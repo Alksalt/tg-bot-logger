@@ -449,10 +449,6 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(localize(lang, "Agent runtime is currently disabled by admin.", "Середовище агента зараз вимкнено адміністратором."))
         return
 
-    if not settings.openrouter_api_key:
-        await update.effective_message.reply_text(t("llm_disabled_key", lang))
-        return
-
     if context.args and context.args[0].lower() == "models":
         cfg = load_model_config(settings.agent_models_path)
         rows = [f"Default tier: {cfg.default_tier}"]
@@ -472,6 +468,16 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         model_preference = context.args[0].lower()
         tier_override = "top_tier"
         question_args = context.args[1:]
+    # Use saved tier preference as fallback
+    if not tier_override:
+        user_settings = db.get_settings(user_id)
+        if user_settings.preferred_tier:
+            tier_override = user_settings.preferred_tier
+    # Require at least one API key — OpenRouter for default tiers, or direct provider key for shortcuts
+    if not model_preference and not settings.openrouter_api_key:
+        await update.effective_message.reply_text(t("llm_disabled_key", lang))
+        return
+
     question = " ".join(question_args).strip()
     if not question:
         await update.effective_message.reply_text(t("llm_usage", lang))
