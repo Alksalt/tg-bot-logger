@@ -137,7 +137,7 @@ Tool system:
 - **Settings**: single `Settings` dataclass from environment variables
 - **Imports**: `from __future__ import annotations` in every file
 - **Bot data**: `app.bot_data["db"]` and `app.bot_data["settings"]` set in `build_application()`
-- **Rate limits**: 10 LLM requests/day shared between /llm and /coach, 30s cooldown
+- **Rate limits**: 80 LLM requests/day shared between /llm and /coach, 30s cooldown
 
 ## Adding a New Command
 

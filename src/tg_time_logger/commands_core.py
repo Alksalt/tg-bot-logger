@@ -27,7 +27,7 @@ from tg_time_logger.service import add_productive_entry, compute_status, normali
 from tg_time_logger.time_utils import week_range_for, week_start_date
 
 logger = logging.getLogger(__name__)
-LLM_DAILY_LIMIT = 10
+LLM_DAILY_LIMIT = 80
 LLM_COOLDOWN_SECONDS = 30
 
 
