@@ -1,14 +1,15 @@
-# Telegram Time Logger v2 (Gamified)
+# Telegram Time Logger v3 (Gamified + AI Agent)
 
-Telegram productivity bot with categories, XP/levels, streaks, quests, shop redemptions, savings goals, and weekly wheel bonuses.
+Telegram productivity bot with categories, XP/levels, streaks, quests, shop economy, savings, AI analytics (/llm), conversational coach (/coach), web search, and interactive help guides.
 
 ## Stack
 
-- Python 3.12+
+- Python 3.11+
 - `python-telegram-bot`
-- SQLite (schema migrations via `schema_migrations`)
+- SQLite (18 auto-migrations)
 - `uv` for dependency/runtime management
-- Optional multi-provider LLM routing (OpenAI/Anthropic/Google; OpenAI wired by default)
+- V3 agent runtime with tiered OpenRouter models (free/cheap/top_tier)
+- Web search: Brave/Tavily/Serper with fallback + cache
 
 ## Setup
 
@@ -102,6 +103,12 @@ Core:
 - `/start [study|build|training|job|spend] [note]`
 - `/stop`
 
+Coach (AI with memory):
+- `/coach <message>`
+- `/coach clear`
+- `/coach memory`
+- `/coach forget <id>`
+
 Plan/reminders:
 - `/plan set <duration>`
 - `/plan show`
@@ -162,25 +169,7 @@ Streak rule: at least `120m` productive in a day is required to count as a strea
 
 Migrations run automatically when `Database(...)` initializes (bot or jobs). Existing data is upgraded in place.
 
-This v2 upgrade adds:
-- category/xp/fun/deep-work columns on entries
-- level-up events
-- streaks and streak freezes
-- quests
-- shop and redemptions
-- weekly wheel spins
-- savings goals
-- llm usage tracking
-- user rules notes
-- global app config (feature toggles, economy tuning, job toggles)
-- config snapshots and rollback
-- admin audit log
-- V3 `agents/` runtime scaffold with directive/execution/orchestration split
-- tiered model policy via `agents/models.yaml`
-- web search tool (Brave/Tavily/Serper fallback) with cache + dedupe
-- user language preference (`en`/`uk`) with `/lang`
-- shop NOK conversion tuning (`economy.nok_to_fun_minutes`)
-- notion backup scaffold job + tool
+18 migrations covering: entries with category/xp/fun/deep-work, level-ups, streaks, quests, shop, redemptions, savings, LLM usage, user rules, app config, audit log, search cache, user profiles, user language, notion config, admin audit, coach messages, and coach memory.
 
 ## V3 Agent Layout
 

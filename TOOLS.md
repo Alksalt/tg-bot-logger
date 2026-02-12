@@ -1,32 +1,48 @@
 # TOOLS.md
 
-Tool manifest for the V3 agent runtime. Keep this short to reduce token usage in prompts.
+Tool manifest for the V3 agent runtime.
 
-## Active tools
+## Active Tools
 
-1. `web_search`
+1. `db_query`
+- Purpose: query user's tracked data (hours, entries, totals, comparisons).
+- Actions: `week_totals`, `recent_entries`, `daily_breakdown`, `category_breakdown`, `note_keyword_sum`.
+- Tags: `data`, `stats`, `history`.
+
+2. `insights`
+- Purpose: derived coaching metrics (consistency, patterns, streaks, bottlenecks).
+- Actions: `consistency`, `category_trends`, `deep_work_rate`, `streak_analysis`.
+- Tags: `analytics`, `insights`.
+
+3. `memory_manage`
+- Purpose: save, list, or delete long-term user memories for the coach.
+- Actions: `save` (category + content), `list` (optional category filter), `delete` (by ID).
+- Categories: preference, goal, fact, context.
+- Tags: `memory`, `coach`. Only loaded by `/coach`, invisible to `/llm`.
+
+4. `web_search`
 - Purpose: fetch current web information.
 - Inputs: `query` (string), `max_results` (optional int, default 5).
 - Providers with fallback: Brave -> Tavily -> Serper.
-- Behavior: cached + deduped query responses (SQLite cache).
+- Tags: `search`, `web`.
 
-1. `notion_mcp`
-- Purpose: create local backup snapshots that are ready for Notion sync.
+5. `quest_propose`
+- Purpose: create new quests via the agent.
+- Inputs: `title`, `difficulty`, `condition_type`, `condition_value`, `reward_minutes`.
+- Tags: `quest`, `gamification`.
+
+6. `notion_mcp`
+- Purpose: create local backup snapshots for Notion sync.
 - Inputs: `mode="backup_now"`, optional `user_id`.
-- Behavior: writes JSON snapshot under `NOTION_BACKUP_DIR`; remote sync remains scaffold-only.
+- Tags: `notion`, `backup`.
 
-## Scaffolded (not implemented yet)
+## Scaffolded (not implemented)
 
-2. `mail_api`
-- Future mail automation tool (draft/send/status).
+7. `mail_api` — future mail automation. Tags: `communication`, `mail`.
+8. `maps_api` — future geocoding/routing. Tags: `maps`, `location`.
+9. `custom_http_api` — future generic API connector. Tags: `http`, `api`.
 
-3. `maps_api`
-- Future geocoding/routing lookup tool.
-
-4. `custom_http_api`
-- Future generic API connector for app integrations.
-
-## Usage policy
+## Usage Policy
 
 - Prefer deterministic local data before external tools.
 - Use tools only when needed.
