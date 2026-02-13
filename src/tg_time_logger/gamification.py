@@ -24,7 +24,7 @@ DEFAULT_ECONOMY_TUNING = {
     "xp_level2_base": 300,
     "xp_linear": 80,
     "xp_quadratic": 4,
-    "level_bonus_scale_percent": 100,
+    "level_bonus_scale_percent": 40,
 }
 
 TITLES = {

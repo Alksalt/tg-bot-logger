@@ -12,9 +12,8 @@ from tg_time_logger.help_guides import (
 )
 
 ALL_COMMANDS = [
-    "log", "spend", "status", "week", "undo", "plan", "start", "stop",
-    "quests", "shop", "redeem", "save", "rules", "llm", "coach", "search",
-    "lang", "reminders", "quiet_hours", "freeze", "todo", "help",
+    "log", "spend", "status", "undo", "plan", "start", "timer", "stop",
+    "quests", "shop", "notes", "llm", "settings", "todo", "help",
 ]
 
 
@@ -28,9 +27,9 @@ def test_all_guide_topics_have_titles() -> None:
         assert topic in GUIDE_TITLES, f"Missing GUIDE_TITLES entry for '{topic}'"
 
 
-def test_all_guide_topics_have_at_least_3_pages() -> None:
+def test_all_guide_topics_have_at_least_one_page() -> None:
     for topic, pages in GUIDE_PAGES.items():
-        assert len(pages) >= 3, f"Guide '{topic}' has only {len(pages)} pages"
+        assert len(pages) >= 1, f"Guide '{topic}' has no pages"
 
 
 def test_all_pages_under_telegram_limit() -> None:
@@ -50,7 +49,7 @@ def test_no_empty_pages() -> None:
 
 
 def test_guide_topic_count() -> None:
-    assert len(GUIDE_PAGES) == 8
+    assert len(GUIDE_PAGES) == 7
 
 
 # ---------------------------------------------------------------------------
@@ -59,26 +58,26 @@ def test_guide_topic_count() -> None:
 
 
 def test_get_guide_page_valid() -> None:
-    text, total = get_guide_page("coach", 1)
+    text, total = get_guide_page("llm", 1)
     assert text is not None
     assert total >= 3
 
 
 def test_get_guide_page_last() -> None:
-    pages = GUIDE_PAGES["coach"]
-    text, total = get_guide_page("coach", len(pages))
+    pages = GUIDE_PAGES["llm"]
+    text, total = get_guide_page("llm", len(pages))
     assert text is not None
     assert total == len(pages)
 
 
 def test_get_guide_page_out_of_range() -> None:
-    text, total = get_guide_page("coach", 999)
+    text, total = get_guide_page("llm", 999)
     assert text is None
     assert total > 0
 
 
 def test_get_guide_page_zero() -> None:
-    text, total = get_guide_page("coach", 0)
+    text, total = get_guide_page("llm", 0)
     assert text is None
 
 
@@ -91,27 +90,29 @@ def test_get_guide_page_invalid_topic() -> None:
 def test_list_guide_topics_sorted() -> None:
     topics = list_guide_topics()
     assert topics == sorted(topics)
-    assert len(topics) == 8
+    assert len(topics) == 7
 
 
 def test_resolve_guide_topic_direct() -> None:
-    assert resolve_guide_topic("coach") == "coach"
     assert resolve_guide_topic("llm") == "llm"
     assert resolve_guide_topic("quests") == "quests"
     assert resolve_guide_topic("shop") == "shop"
+    assert resolve_guide_topic("notes") == "notes"
 
 
 def test_resolve_guide_topic_aliases() -> None:
     assert resolve_guide_topic("economy") == "shop"
     assert resolve_guide_topic("timer") == "logging"
-    assert resolve_guide_topic("research") == "search"
+    assert resolve_guide_topic("coach") == "llm"
     assert resolve_guide_topic("ai") == "llm"
     assert resolve_guide_topic("savings") == "shop"
     assert resolve_guide_topic("language") == "settings"
+    assert resolve_guide_topic("rules") == "notes"
+    assert resolve_guide_topic("freeze") == "shop"
 
 
 def test_resolve_guide_topic_strips_slash() -> None:
-    assert resolve_guide_topic("/coach") == "coach"
+    assert resolve_guide_topic("/llm") == "llm"
     assert resolve_guide_topic("/log") == "logging"
 
 

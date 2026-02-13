@@ -103,6 +103,12 @@ def status_message(view: StatusView, username: str | None = None, lang: str = "e
                 if view.week_plan_target_minutes > 0
                 else localize(lang, "  🎯 Plan: not set (/plan set <duration>)", "  🎯 План: не встановлено (/plan set <duration>)")
             ),
+            localize(
+                lang,
+                "  🧠 Deep work (90m+): {count} sessions",
+                "  🧠 Deep work (90хв+): {count} сесій",
+                count=view.deep_sessions_week,
+            ),
             "",
             localize(lang, "💰 Fun Economy:", "💰 Економіка відпочинку:"),
             (
@@ -126,34 +132,6 @@ def status_message(view: StatusView, username: str | None = None, lang: str = "e
     )
     return "\n".join(lines)
 
-
-def week_message(view: StatusView, lang: str = "en") -> str:
-    lines = [
-        localize(lang, "📅 Week", "📅 Тиждень"),
-        localize(lang, "Productive: {mins}", "Продуктивно: {mins}", mins=format_minutes_hm(view.week.productive_minutes)),
-        localize(lang, "Spent: {mins}", "Витрачено: {mins}", mins=format_minutes_hm(view.week.spent_minutes)),
-        (
-            localize(
-                lang,
-                "Plan: {done}m/{target}m (remaining {remain}m)",
-                "План: {done}m/{target}m (залишилось {remain}m)",
-                done=view.week_plan_done_minutes,
-                target=view.week_plan_target_minutes,
-                remain=view.week_plan_remaining_minutes,
-            )
-            if view.week_plan_target_minutes > 0
-            else localize(lang, "Plan: not set", "План: не встановлено")
-        ),
-        localize(lang, "XP this week: {xp}", "XP за тиждень: {xp}", xp=view.xp_week),
-        localize(
-            lang,
-            "Deep work sessions (90m+): {count}",
-            "Сесії deep work (90хв+): {count}",
-            count=view.deep_sessions_week,
-        ),
-        *_fun_remaining_lines(view.economy.remaining_fun_minutes, lang),
-    ]
-    return "\n".join(lines)
 
 
 def entry_removed_message(entry: Entry, lang: str = "en") -> str:

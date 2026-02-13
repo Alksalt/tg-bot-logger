@@ -7,7 +7,7 @@ Telegram productivity bot that tracks time, gamifies work with XP/levels/streaks
 ## Quick Commands
 
 ```bash
-uv run pytest                    # run all tests (~144 tests)
+uv run pytest                    # run all tests (~173 tests)
 uv run pytest tests/test_X.py -v # run one test file
 uv run python bot.py             # start the bot
 uv run python admin.py           # start admin panel
@@ -20,11 +20,12 @@ uv run python jobs.py <job_name> # run a scheduled job
 bot.py / admin.py / jobs.py          # entry points
 src/tg_time_logger/
   telegram_bot.py                    # handler registration (the wiring point)
-  commands_core.py                   # /log, /spend, /status, /week, /undo, /plan, /start, /stop, /llm, /search, /lang, /rules, /reminders, /quiet_hours, /freeze
-  commands_coach.py                  # /coach (AI coach with memory)
+  commands_core.py                   # /log, /spend, /status, /undo, /plan, /start (onboarding), /timer, /stop, /llm, /notes
   commands_help.py                   # /help with paginated guide system
   commands_quests.py                 # /quests
-  commands_shop.py                   # /shop, /redeem, /save
+  commands_settings.py               # /settings (lang, reminders, quiet hours)
+  commands_shop.py                   # /shop (items, buy, save, fund, goal, freeze, price, budget)
+  commands_todo.py                   # /todo
   commands_shared.py                 # shared helpers: touch_user, get_db, get_settings, build_keyboard
   config.py                         # Settings dataclass from env vars
   db.py                             # Database class with 18 migrations, all DB methods
@@ -35,7 +36,7 @@ src/tg_time_logger/
   gamification.py                   # XP/level formulas, fun rates, titles
   duration.py                       # parse_duration_to_minutes (90m, 1.5h, 1h20m)
   i18n.py                           # t(key, lang) + localize(lang, en, uk) — languages: en, uk
-  messages.py                       # status_message, week_message formatters
+  messages.py                       # status_message formatter
   help_guides.py                    # guide page content, COMMAND_DESCRIPTIONS, HELP_TOPICS, GUIDE_PAGES
   shop.py / savings.py              # shop + savings logic
   shop_pricing.py                   # NOK-to-minutes conversion, web price extraction
@@ -55,8 +56,7 @@ src/tg_time_logger/
       llm_client.py                 # call_openrouter(), JSON response parsing
       loop.py                       # AgentLoop: max 6 steps, 4 tool calls, tier escalation
     orchestration/
-      runner.py                     # run_llm_agent() — /llm entry point
-      coach_runner.py               # run_coach_agent() — /coach entry point
+      runner.py                     # run_llm_agent() — unified entry point for /llm + /llm chat
       intent_router.py              # regex-based tool tag + skill resolution
     tools/
       base.py                       # Tool protocol, ToolContext, ToolResult
@@ -73,7 +73,7 @@ agents/                             # top-level agent config (NOT under src/)
   models.yaml                       # tiered model policy (free / open_source_cheap / top_tier)
   directives/
     llm_assistant.md                # base directive for /llm agent
-    coach.md                        # dedicated directive for /coach agent
+    coach.md                        # coaching directive (loaded in chat mode)
     skills/                         # lazy-loaded skill fragments for /llm
       coach.md                      # coaching skill (triggered by "advice", "recommend")
       quest_builder.md              # quest creation skill
@@ -82,10 +82,32 @@ agents/                             # top-level agent config (NOT under src/)
 tests/                              # pytest, plain functions + classes, tmp_path fixtures
 ```
 
+## Command Reference (15 commands)
+
+```
+/start           Welcome / onboarding
+/log             Log productive time (study/build/training/job/other)
+/spend           Log fun/consumption time
+/timer (/t)      Start a timer session
+/stop            Stop active timer
+/status          Level, XP, streak, economy, deep work summary
+/undo            Undo last entry
+/plan            Weekly productive time target
+/quests          View/manage quests
+/shop            Shop items, buy, savings, streak freeze
+/notes (/rules)  Personal notes / rulebook
+/llm             AI analytics + chat mode + coaching
+/settings        Language, reminders, quiet hours
+/todo            Daily to-do list with auto-logging
+/help            Help and guide system
+```
+
 ## Architecture Patterns
 
 ### Handler Registration
 All command handlers follow the same pattern: create a `register_*_handlers(app)` function, call it in `telegram_bot.py`. Order matters: `register_unknown_handler` must be last.
+
+Handler order: help → core → quests → shop → settings → todo → unknown.
 
 ### Database
 - SQLite with numbered migrations (currently 18) in `db.py`
@@ -95,9 +117,9 @@ All command handlers follow the same pattern: create a `register_*_handlers(app)
 - All DB methods on the `Database` class in `db.py`
 
 ### Agent Runtime (V3)
-Two entry points share the same `AgentLoop`:
-- `/llm` → `runner.py:run_llm_agent()` — stateless, intent-routed tool filtering + skill composition
-- `/coach` → `coach_runner.py:run_coach_agent()` — stateful with conversation history + long-term memory
+Single entry point: `runner.py:run_llm_agent()` with `is_chat_mode` parameter:
+- `is_chat_mode=False` (default): stateless analytics, intent-routed tool filtering + skill composition
+- `is_chat_mode=True`: stateful coaching with conversation history (8 turns) + long-term memory (30 max)
 
 Agent loop constraints:
 - Max 6 steps, max 4 tool calls per request
@@ -113,9 +135,17 @@ Tool system:
 
 ### Economy
 - Productive time (study/build/training/job) earns fun minutes at category-specific rates
+- Job is excluded from milestone calculations
+- Level-up bonus scale: 40%
 - Fun time (`/spend`) costs fun minutes
 - Shop items cost fun minutes, savings fund locks minutes for expensive items
 - XP progression: quadratic scaling, level titles, level-up bonuses
+
+### Free-Form Text Parsing
+- Users can send plain text messages (no command prefix)
+- LLM parses text into a log action
+- Shows confirmation with Accept/Decline buttons before logging
+- Pending confirmations stored in `bot_data` with 5-minute TTL
 
 ### i18n
 - Two approaches: `t(key, lang)` for dictionary-based, `localize(lang, en, uk)` for inline
@@ -123,10 +153,10 @@ Tool system:
 - Help/guide content is English-only
 
 ### Help System
-- `/help` → overview of all 21 commands
+- `/help` → overview of all 15 commands
 - `/help <topic>` → brief help + Guide button
 - Guide button opens paginated walkthrough (edit_message_text + InlineKeyboard)
-- 7 guides, 39 total pages, callback format: `guide:<topic>:<page>`
+- 7 guides, callback format: `guide:<topic>:<page>`
 
 ## Key Conventions
 
@@ -137,7 +167,8 @@ Tool system:
 - **Settings**: single `Settings` dataclass from environment variables
 - **Imports**: `from __future__ import annotations` in every file
 - **Bot data**: `app.bot_data["db"]` and `app.bot_data["settings"]` set in `build_application()`
-- **Rate limits**: 80 LLM requests/day shared between /llm and /coach, 30s cooldown
+- **Rate limits**: 80 LLM requests/day for /llm (including chat mode), 30s cooldown
+- **Contextual keyboard**: `build_keyboard(timer_running=True)` shows only STOP button
 
 ## Adding a New Command
 

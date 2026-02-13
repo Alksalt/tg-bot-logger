@@ -183,9 +183,11 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
     wheel_bonus = db.sum_wheel_bonus(user_id)
     saved = db.sum_saved_locked(user_id)
 
+    milestone_productive = all_productive - all_categories.get("job", 0)
+
     economy = build_economy(
         base_fun_minutes=base_fun,
-        productive_minutes=all_productive,
+        productive_minutes=milestone_productive,
         level_bonus_minutes=level_bonus,
         quest_bonus_minutes=quest_bonus,
         wheel_bonus_minutes=wheel_bonus,

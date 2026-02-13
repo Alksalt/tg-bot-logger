@@ -261,9 +261,9 @@ class TestMemoryManageTool:
 # ---------------------------------------------------------------------------
 
 
-class TestCoachRunner:
+class TestChatMode:
     def test_saves_messages(self, tmp_path: Path, monkeypatch) -> None:
-        from tg_time_logger.agents.orchestration import coach_runner
+        from tg_time_logger.agents.orchestration import runner
         from tg_time_logger.agents.execution.loop import AgentRunResult
 
         db = Database(tmp_path / "app.db")
@@ -285,8 +285,8 @@ class TestCoachRunner:
         )
         monkeypatch.setattr(db, "add_admin_audit", lambda **kw: None)
 
-        result = coach_runner.run_coach_agent(
-            db=db, settings=settings, user_id=1, now=now, message="How am I doing?"
+        result = runner.run_llm_agent(
+            db=db, settings=settings, user_id=1, now=now, question="How am I doing?", is_chat_mode=True
         )
         assert result["ok"]
         assert result["answer"] == "Great question!"
@@ -299,7 +299,7 @@ class TestCoachRunner:
         assert msgs[1].content == "Great question!"
 
     def test_context_includes_history(self, tmp_path: Path, monkeypatch) -> None:
-        from tg_time_logger.agents.orchestration import coach_runner
+        from tg_time_logger.agents.orchestration import runner
         from tg_time_logger.agents.execution.loop import AgentRunResult
 
         db = Database(tmp_path / "app.db")
@@ -328,15 +328,15 @@ class TestCoachRunner:
         )
         monkeypatch.setattr(db, "add_admin_audit", lambda **kw: None)
 
-        coach_runner.run_coach_agent(
-            db=db, settings=settings, user_id=1, now=now, message="What next?"
+        runner.run_llm_agent(
+            db=db, settings=settings, user_id=1, now=now, question="What next?", is_chat_mode=True
         )
         ctx_text = captured_req["context_text"]
         assert "Recent conversation:" in ctx_text
         assert "Hi coach" in ctx_text
 
     def test_context_includes_memory(self, tmp_path: Path, monkeypatch) -> None:
-        from tg_time_logger.agents.orchestration import coach_runner
+        from tg_time_logger.agents.orchestration import runner
         from tg_time_logger.agents.execution.loop import AgentRunResult
 
         db = Database(tmp_path / "app.db")
@@ -363,8 +363,8 @@ class TestCoachRunner:
         )
         monkeypatch.setattr(db, "add_admin_audit", lambda **kw: None)
 
-        coach_runner.run_coach_agent(
-            db=db, settings=settings, user_id=1, now=now, message="Tell me about me"
+        runner.run_llm_agent(
+            db=db, settings=settings, user_id=1, now=now, question="Tell me about me", is_chat_mode=True
         )
         ctx_text = captured_req["context_text"]
         assert "Known about user:" in ctx_text
@@ -372,19 +372,19 @@ class TestCoachRunner:
 
 
 # ---------------------------------------------------------------------------
-# Coach runner context helpers (unit)
+# Context helpers (unit)
 # ---------------------------------------------------------------------------
 
 
 class TestContextBuilders:
     def test_conversation_history_text_empty(self, tmp_path: Path) -> None:
-        from tg_time_logger.agents.orchestration.coach_runner import _build_conversation_history_text
+        from tg_time_logger.agents.orchestration.runner import _build_conversation_history_text
 
         db = Database(tmp_path / "app.db")
         assert _build_conversation_history_text(db, 1) == ""
 
     def test_conversation_history_truncates(self, tmp_path: Path) -> None:
-        from tg_time_logger.agents.orchestration.coach_runner import _build_conversation_history_text
+        from tg_time_logger.agents.orchestration.runner import _build_conversation_history_text
 
         db = Database(tmp_path / "app.db")
         long_msg = "x" * 500
@@ -394,13 +394,13 @@ class TestContextBuilders:
         assert len(text) < 500
 
     def test_memory_context_text_empty(self, tmp_path: Path) -> None:
-        from tg_time_logger.agents.orchestration.coach_runner import _build_memory_context_text
+        from tg_time_logger.agents.orchestration.runner import _build_memory_context_text
 
         db = Database(tmp_path / "app.db")
         assert _build_memory_context_text(db, 1) == ""
 
     def test_memory_context_text_with_tags(self, tmp_path: Path) -> None:
-        from tg_time_logger.agents.orchestration.coach_runner import _build_memory_context_text
+        from tg_time_logger.agents.orchestration.runner import _build_memory_context_text
 
         db = Database(tmp_path / "app.db")
         db.add_coach_memory(1, "goal", "level 20", "gamification", _dt(2026, 2, 12))

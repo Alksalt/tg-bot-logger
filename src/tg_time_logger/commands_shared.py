@@ -10,7 +10,11 @@ from tg_time_logger.llm_messages import LlmContext, level_up_message
 from tg_time_logger.llm_router import LlmRoute
 
 
-def build_keyboard() -> InlineKeyboardMarkup:
+def build_keyboard(*, timer_running: bool = False) -> InlineKeyboardMarkup:
+    if timer_running:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏹ Stop Timer", callback_data="timer:stop")],
+        ])
     rows = [
         [
             InlineKeyboardButton("+15m Study", callback_data="log:study:15"),
@@ -25,7 +29,6 @@ def build_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("-60m Fun", callback_data="spend:60"),
             InlineKeyboardButton("Status", callback_data="status"),
-            InlineKeyboardButton("Week", callback_data="week"),
         ],
         [
             InlineKeyboardButton("Undo last", callback_data="undo"),

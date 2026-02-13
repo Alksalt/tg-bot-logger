@@ -63,3 +63,24 @@ def test_deep_work_multiplier_thresholds() -> None:
     assert deep_work_multiplier(45) == 1.1
     assert deep_work_multiplier(90) == 1.2
     assert deep_work_multiplier(120) == 1.5
+
+
+def test_level_bonus_default_scale_is_40_percent() -> None:
+    val_40 = level_up_bonus_minutes(5)
+    val_100 = level_up_bonus_minutes(5, tuning={"level_bonus_scale_percent": 100})
+    assert val_40 == (val_100 * 40) // 100
+
+
+def test_milestone_excludes_job(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    from tg_time_logger.db import Database
+    from tg_time_logger.service import add_productive_entry, compute_status
+
+    db = Database(tmp_path / "app.db")
+    now = datetime(2026, 2, 12, 12, 0, tzinfo=timezone.utc)
+    add_productive_entry(db, 1, 600, "study", None, now, "manual")
+    add_productive_entry(db, 1, 600, "job", None, now, "manual")
+    view = compute_status(db, 1, now)
+    # Only 600m study counts for milestones (1 block = 180 bonus)
+    assert view.economy.milestone_bonus_minutes == 180

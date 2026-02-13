@@ -1,9 +1,9 @@
 from tg_time_logger.gamification import build_economy
-from tg_time_logger.messages import NEGATIVE_WARNING, status_message, week_message
+from tg_time_logger.messages import NEGATIVE_WARNING, status_message
 from tg_time_logger.service import PeriodTotals, StatusView
 
 
-def _view(productive_all: int, spent_all: int) -> StatusView:
+def _view(productive_all: int, spent_all: int, deep_sessions: int = 0) -> StatusView:
     economy = build_economy(
         base_fun_minutes=0,
         productive_minutes=productive_all,
@@ -30,7 +30,7 @@ def _view(productive_all: int, spent_all: int) -> StatusView:
         streak_current=0,
         streak_longest=0,
         streak_multiplier=1.0,
-        deep_sessions_week=0,
+        deep_sessions_week=deep_sessions,
         active_quests=0,
         week_plan_done_minutes=0,
         week_plan_target_minutes=0,
@@ -45,7 +45,7 @@ def test_status_negative_fun_is_clamped_and_warned() -> None:
     assert NEGATIVE_WARNING in text
 
 
-def test_week_negative_fun_is_clamped_and_warned() -> None:
-    text = week_message(_view(productive_all=0, spent_all=10))
-    assert "Remaining: -1m" in text
-    assert NEGATIVE_WARNING in text
+def test_status_shows_deep_work_sessions() -> None:
+    text = status_message(_view(productive_all=0, spent_all=0, deep_sessions=3))
+    assert "Deep work" in text
+    assert "3" in text

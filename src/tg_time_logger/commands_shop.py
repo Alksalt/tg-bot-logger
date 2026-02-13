@@ -312,125 +312,87 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(localize(lang, "Shop monthly budget set to {value}m", "Місячний бюджет магазину: {value}хв", value=value))
         return
 
-    await update.effective_message.reply_text(localize(lang, "Usage: /shop, /shop add, /shop price, /shop remove, /shop budget", "Використання: /shop, /shop add, /shop price, /shop remove, /shop budget"))
-
-
-async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id, _, now = touch_user(update, context)
-    db = _db(context)
-    lang = get_user_language(context, user_id)
-    if not db.is_feature_enabled("shop"):
-        await update.effective_message.reply_text(localize(lang, "Shop is currently disabled by admin.", "Магазин зараз вимкнений адміністратором."))
-        return
-
-    if not context.args:
-        await update.effective_message.reply_text(localize(lang, "Usage: /redeem <item_id|item_name> OR /redeem history", "Використання: /redeem <item_id|item_name> OR /redeem history"))
-        return
-
-    if context.args[0].lower() == "history":
-        rows = db.list_redemptions(user_id, limit=20)
-        if not rows:
-            await update.effective_message.reply_text(localize(lang, "No redemptions yet.", "Покупок ще немає."))
+    # --- buy (was /redeem + /freeze) ---
+    if action == "buy":
+        sub_args = context.args[1:]
+        if not sub_args:
+            await update.effective_message.reply_text(localize(lang, "Usage: /shop buy <id|name> OR /shop buy history OR /shop buy freeze", "Використання: /shop buy <id|name> OR /shop buy history OR /shop buy freeze"))
             return
-        lines = [localize(lang, "Redemption history:", "Історія покупок:")]
-        for r in rows:
-            lines.append(f"- {r['emoji']} {r['name']} ({r['fun_minutes_spent']}m)")
-        await update.effective_message.reply_text("\n".join(lines))
-        return
-
-    identifier = " ".join(context.args)
-    item = db.find_shop_item(user_id, identifier)
-    if not item:
-        await update.effective_message.reply_text(localize(lang, "Shop item not found", "Товар не знайдено"))
-        return
-
-    view = compute_status(db, user_id, now)
-    spendable_for_shop = view.economy.remaining_fun_minutes + view.economy.saved_fun_minutes
-    if spendable_for_shop < item.cost_fun_minutes:
-        await update.effective_message.reply_text(localize(lang, "Not enough fun minutes for this redemption", "Недостатньо fun хвилин для цієї покупки"))
-        return
-
-    budget_left = monthly_budget_remaining(db, user_id, now)
-    if budget_left is not None and budget_left < item.cost_fun_minutes:
-        await update.effective_message.reply_text(localize(lang, "Monthly budget exceeded. Remaining: {mins}m", "Місячний бюджет перевищено. Залишок: {mins}хв", mins=budget_left))
-        return
-
-    from_fund = min(item.cost_fun_minutes, max(view.economy.saved_fun_minutes, 0))
-    moved = db.withdraw_from_savings(user_id, from_fund, now)
-    from_remaining = item.cost_fun_minutes - moved
-
-    db.add_redemption(user_id, item.id, item.cost_fun_minutes, now)
-    db.add_entry(
-        user_id=user_id,
-        kind="spend",
-        category="spend",
-        minutes=item.cost_fun_minutes,
-        note=f"Redeem: {item.name}",
-        created_at=now,
-        source="redeem",
-    )
-
-    await update.effective_message.reply_text(
-        localize(
-            lang,
-            "{emoji} Redeemed: {name}! -{cost} fun min\nUsed from fund: {fund}m | from remaining: {remain}m",
-            "{emoji} Придбано: {name}! -{cost} fun хв\nЗ фонду: {fund}хв | із залишку: {remain}хв",
-            emoji=item.emoji,
-            name=item.name,
-            cost=item.cost_fun_minutes,
-            fund=moved,
-            remain=from_remaining,
+        sub = sub_args[0].lower()
+        if sub == "history":
+            rows = db.list_redemptions(user_id, limit=20)
+            if not rows:
+                await update.effective_message.reply_text(localize(lang, "No redemptions yet.", "Покупок ще немає."))
+                return
+            lines = [localize(lang, "Redemption history:", "Історія покупок:")]
+            for r in rows:
+                lines.append(f"- {r['emoji']} {r['name']} ({r['fun_minutes_spent']}m)")
+            await update.effective_message.reply_text("\n".join(lines))
+            return
+        if sub == "freeze":
+            view = compute_status(db, user_id, now)
+            if view.economy.remaining_fun_minutes < 200:
+                await update.effective_message.reply_text(localize(lang, "Need at least 200 fun minutes to buy a streak freeze.", "Потрібно щонайменше 200 fun хвилин для покупки freeze."))
+                return
+            freeze_date = now.date() + timedelta(days=1)
+            if db.has_freeze_on_date(user_id, freeze_date):
+                await update.effective_message.reply_text(localize(lang, "Freeze already active for tomorrow.", "Freeze вже активний на завтра."))
+                return
+            db.add_entry(user_id=user_id, kind="spend", category="spend", minutes=200, note=f"Streak freeze for {freeze_date.isoformat()}", created_at=now, source="freeze")
+            db.create_freeze(user_id, freeze_date, now)
+            await update.effective_message.reply_text(
+                localize(lang, "🧊 Streak freeze purchased for {date} (-200 fun minutes).", "🧊 Freeze для серії куплено на {date} (-200 fun хвилин).", date=freeze_date.isoformat())
+            )
+            return
+        # buy item by id or name
+        identifier = " ".join(sub_args)
+        item = db.find_shop_item(user_id, identifier)
+        if not item:
+            await update.effective_message.reply_text(localize(lang, "Shop item not found", "Товар не знайдено"))
+            return
+        view = compute_status(db, user_id, now)
+        spendable = view.economy.remaining_fun_minutes + view.economy.saved_fun_minutes
+        if spendable < item.cost_fun_minutes:
+            await update.effective_message.reply_text(localize(lang, "Not enough fun minutes for this redemption", "Недостатньо fun хвилин для цієї покупки"))
+            return
+        budget_left = monthly_budget_remaining(db, user_id, now)
+        if budget_left is not None and budget_left < item.cost_fun_minutes:
+            await update.effective_message.reply_text(localize(lang, "Monthly budget exceeded. Remaining: {mins}m", "Місячний бюджет перевищено. Залишок: {mins}хв", mins=budget_left))
+            return
+        from_fund = min(item.cost_fun_minutes, max(view.economy.saved_fun_minutes, 0))
+        moved = db.withdraw_from_savings(user_id, from_fund, now)
+        from_remaining = item.cost_fun_minutes - moved
+        db.add_redemption(user_id, item.id, item.cost_fun_minutes, now)
+        db.add_entry(user_id=user_id, kind="spend", category="spend", minutes=item.cost_fun_minutes, note=f"Redeem: {item.name}", created_at=now, source="redeem")
+        await update.effective_message.reply_text(
+            localize(lang, "{emoji} Redeemed: {name}! -{cost} fun min\nUsed from fund: {fund}m | from remaining: {remain}m", "{emoji} Придбано: {name}! -{cost} fun хв\nЗ фонду: {fund}хв | із залишку: {remain}хв", emoji=item.emoji, name=item.name, cost=item.cost_fun_minutes, fund=moved, remain=from_remaining)
         )
-    )
-
-
-async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id, _, now = touch_user(update, context)
-    db = _db(context)
-    lang = get_user_language(context, user_id)
-    if not db.is_feature_enabled("savings"):
-        await update.effective_message.reply_text(localize(lang, "Savings fund is currently disabled by admin.", "Фонд заощаджень зараз вимкнений адміністратором."))
         return
 
-    if not context.args:
+    # --- save (was /save with no args) ---
+    if action == "save":
+        if not db.is_feature_enabled("savings"):
+            await update.effective_message.reply_text(localize(lang, "Savings fund is currently disabled by admin.", "Фонд заощаджень зараз вимкнений адміністратором."))
+            return
         goal = db.get_active_savings_goal(user_id)
         if not goal:
             await update.effective_message.reply_text(
-                localize(lang, "No save fund yet. Use /save fund <duration> or /save goal <duration> [name].", "Фонду ще немає. Використай /save fund <duration> або /save goal <duration> [name].")
+                localize(lang, "No save fund yet. Use /shop fund <duration> or /shop goal <duration> [name].", "Фонду ще немає. Використай /shop fund <duration> або /shop goal <duration> [name].")
             )
             return
         pct = (goal.saved_fun_minutes / goal.target_fun_minutes * 100) if goal.target_fun_minutes else 0
-        settings = db.get_settings(user_id)
-        sunday = settings.sunday_fund_percent
+        settings_user = db.get_settings(user_id)
+        sunday = settings_user.sunday_fund_percent
         await update.effective_message.reply_text(
-            localize(
-                lang,
-                "🏦 Save fund\nGoal: {name}\nProgress: {saved}/{target}m ({pct:.1f}%)\nSunday auto-transfer: {sunday}\nUse /save fund <duration> to add minutes.",
-                "🏦 Фонд збереження\nЦіль: {name}\nПрогрес: {saved}/{target}хв ({pct:.1f}%)\nНедільний автопереказ: {sunday}\nВикористай /save fund <duration> для поповнення.",
-                name=goal.name,
-                saved=goal.saved_fun_minutes,
-                target=goal.target_fun_minutes,
-                pct=pct,
-                sunday=("off" if sunday == 0 else f"{sunday}% on"),
-            )
+            localize(lang, "🏦 Save fund\nGoal: {name}\nProgress: {saved}/{target}m ({pct:.1f}%)\nSunday auto-transfer: {sunday}\nUse /shop fund <duration> to add minutes.", "🏦 Фонд збереження\nЦіль: {name}\nПрогрес: {saved}/{target}хв ({pct:.1f}%)\nНедільний автопереказ: {sunday}\nВикористай /shop fund <duration> для поповнення.", name=goal.name, saved=goal.saved_fun_minutes, target=goal.target_fun_minutes, pct=pct, sunday=("off" if sunday == 0 else f"{sunday}% on"))
         )
         return
 
-    action = context.args[0].lower()
-    if action == "goal" and len(context.args) >= 2:
-        try:
-            target = parse_duration_to_minutes(context.args[1])
-        except DurationParseError as exc:
-            await update.effective_message.reply_text(str(exc))
-            return
-        name = " ".join(context.args[2:]).strip() or "Save fund"
-        goal = db.upsert_active_savings_goal(user_id, name, target, now)
-        await update.effective_message.reply_text(
-            localize(lang, "Save goal set: {name} ({saved}/{target}m)", "Ціль збереження встановлено: {name} ({saved}/{target}хв)", name=goal.name, saved=goal.saved_fun_minutes, target=goal.target_fun_minutes)
-        )
-        return
-
+    # --- fund/deposit (was /save fund) ---
     if action in {"fund", "deposit"} and len(context.args) >= 2:
+        if not db.is_feature_enabled("savings"):
+            await update.effective_message.reply_text(localize(lang, "Savings fund is currently disabled by admin.", "Фонд заощаджень зараз вимкнений адміністратором."))
+            return
         try:
             minutes = parse_duration_to_minutes(context.args[1])
         except DurationParseError as exc:
@@ -446,28 +408,33 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.effective_message.reply_text(localize(lang, "Could not update save fund right now. Try again.", "Не вдалося оновити фонд збереження. Спробуй ще раз."))
             return
         await update.effective_message.reply_text(
-            localize(
-                lang,
-                "Deposited {mins}m into '{name}' ({saved}/{target})",
-                "Додано {mins}хв до '{name}' ({saved}/{target})",
-                mins=minutes,
-                name=goal.name,
-                saved=goal.saved_fun_minutes,
-                target=goal.target_fun_minutes,
-            )
+            localize(lang, "Deposited {mins}m into '{name}' ({saved}/{target})", "Додано {mins}хв до '{name}' ({saved}/{target})", mins=minutes, name=goal.name, saved=goal.saved_fun_minutes, target=goal.target_fun_minutes)
         )
         return
 
+    # --- goal (was /save goal) ---
+    if action == "goal" and len(context.args) >= 2:
+        if not db.is_feature_enabled("savings"):
+            await update.effective_message.reply_text(localize(lang, "Savings fund is currently disabled by admin.", "Фонд заощаджень зараз вимкнений адміністратором."))
+            return
+        try:
+            target = parse_duration_to_minutes(context.args[1])
+        except DurationParseError as exc:
+            await update.effective_message.reply_text(str(exc))
+            return
+        name = " ".join(context.args[2:]).strip() or "Save fund"
+        goal = db.upsert_active_savings_goal(user_id, name, target, now)
+        await update.effective_message.reply_text(
+            localize(lang, "Save goal set: {name} ({saved}/{target}m)", "Ціль збереження встановлено: {name} ({saved}/{target}хв)", name=goal.name, saved=goal.saved_fun_minutes, target=goal.target_fun_minutes)
+        )
+        return
+
+    # --- sunday (was /save sunday) ---
     if action == "sunday":
         if len(context.args) == 1:
             percent = db.get_settings(user_id).sunday_fund_percent
             await update.effective_message.reply_text(
-                localize(
-                    lang,
-                    "Sunday auto-transfer is {mode}.\nUse /save sunday on 50|60|70 or /save sunday off.",
-                    "Недільний автопереказ: {mode}.\nВикористай /save sunday on 50|60|70 або /save sunday off.",
-                    mode=("off" if percent == 0 else f"on ({percent}%)"),
-                )
+                localize(lang, "Sunday auto-transfer is {mode}.\nUse /shop sunday on 50|60|70 or /shop sunday off.", "Недільний автопереказ: {mode}.\nВикористай /shop sunday on 50|60|70 або /shop sunday off.", mode=("off" if percent == 0 else f"on ({percent}%)"))
             )
             return
         sub = context.args[1].lower()
@@ -477,15 +444,16 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         if sub == "on":
             if len(context.args) < 3 or context.args[2] not in {"50", "60", "70"}:
-                await update.effective_message.reply_text(localize(lang, "Usage: /save sunday on 50|60|70", "Використання: /save sunday on 50|60|70"))
+                await update.effective_message.reply_text(localize(lang, "Usage: /shop sunday on 50|60|70", "Використання: /shop sunday on 50|60|70"))
                 return
             percent = int(context.args[2])
             db.update_sunday_fund_percent(user_id, percent)
             await update.effective_message.reply_text(localize(lang, "Sunday auto-transfer enabled: {p}% of available fun.", "Недільний автопереказ увімкнено: {p}% доступного fun.", p=percent))
             return
-        await update.effective_message.reply_text(localize(lang, "Usage: /save sunday on 50|60|70 OR /save sunday off", "Використання: /save sunday on 50|60|70 OR /save sunday off"))
+        await update.effective_message.reply_text(localize(lang, "Usage: /shop sunday on 50|60|70 OR /shop sunday off", "Використання: /shop sunday on 50|60|70 OR /shop sunday off"))
         return
 
+    # --- auto (was /save auto) ---
     if action == "auto" and len(context.args) >= 2:
         try:
             minutes = parse_duration_to_minutes(context.args[1])
@@ -496,18 +464,13 @@ async def cmd_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(localize(lang, "Auto-save set to {mins}m/day", "Автозбереження: {mins}хв/день", mins=minutes))
         return
 
+    # --- cancel (was /save cancel) ---
     if action == "cancel" and len(context.args) >= 2 and context.args[1].isdigit():
         ok = db.cancel_savings_goal(user_id, int(context.args[1]))
         await update.effective_message.reply_text(localize(lang, "Savings goal cancelled", "Ціль збереження скасовано") if ok else localize(lang, "Goal not found", "Ціль не знайдено"))
         return
 
-    await update.effective_message.reply_text(
-        localize(
-            lang,
-            "Usage: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off",
-            "Використання: /save, /save goal <duration> [name], /save fund <duration>, /save auto <duration>, /save sunday on|off",
-        )
-    )
+    await update.effective_message.reply_text(localize(lang, "Usage: /shop, /shop add, /shop buy, /shop save, /shop fund, /shop goal, /shop price, /shop remove, /shop budget", "Використання: /shop, /shop add, /shop buy, /shop save, /shop fund, /shop goal, /shop price, /shop remove, /shop budget"))
 
 
 async def handle_shop_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -570,6 +533,4 @@ async def handle_shop_callbacks(update: Update, context: ContextTypes.DEFAULT_TY
 
 def register_shop_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("shop", cmd_shop))
-    app.add_handler(CommandHandler("redeem", cmd_redeem))
-    app.add_handler(CommandHandler("save", cmd_save))
     app.add_handler(CallbackQueryHandler(handle_shop_callbacks, pattern=r"^shop_price_(?:add|cancel):"))
