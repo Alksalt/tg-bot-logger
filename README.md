@@ -8,7 +8,7 @@ Telegram productivity bot with categories, XP/levels, streaks, quests, shop econ
 - `python-telegram-bot`
 - SQLite (18 auto-migrations)
 - `uv` for dependency/runtime management
-- V3 agent runtime with tiered OpenRouter models (free/cheap/top_tier)
+- V3 agent runtime with configurable LLM tiers (free/open_source/kimi/deepseek/qwen/gpt/gemini/claude/top)
 - Web search: Brave/Tavily/Serper with fallback + cache
 
 ## Setup
@@ -96,11 +96,12 @@ Core:
 - `/llm <question>`
 - `/llm quest <easy|medium|hard> [3|5|7|14|21]`
 - `/llm quests [3|5|7|14|21]` (random difficulty)
-- `/llm tier <free|open_source_cheap|top_tier> <question>`
+- `/llm health`
 - `/llm models`
 - `/search <query>`
 - `/lang`
 - `/lang <en|uk>`
+- `/settings tier <name|default>`
 - `/start [study|build|training|job|spend] [note]`
 - `/stop`
 

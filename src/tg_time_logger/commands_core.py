@@ -24,6 +24,7 @@ from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES
 from tg_time_logger.i18n import localize, t
 from tg_time_logger.llm_parser import parse_free_form_with_llm
 from tg_time_logger.llm_router import LlmRoute
+from tg_time_logger.llm_tiers import resolve_available_tier
 from tg_time_logger.messages import entry_removed_message, status_message
 from tg_time_logger.quests import (
     QUEST_ALLOWED_DURATIONS,
@@ -38,12 +39,58 @@ from tg_time_logger.service import add_productive_entry, compute_status, normali
 from tg_time_logger.time_utils import week_range_for, week_start_date
 
 logger = logging.getLogger(__name__)
-LLM_DAILY_LIMIT = 80
-LLM_COOLDOWN_SECONDS = 30
 _FF_PENDING_KEY = "freeform_pending"
 _FF_TTL_MINUTES = 5
 _QUEST_PENDING_KEY = "quest_pending"
 _QUEST_TTL_MINUTES = 10
+
+
+def _has_any_llm_key(settings) -> bool:
+    return bool(
+        settings.openrouter_api_key
+        or settings.openai_api_key
+        or settings.google_api_key
+        or settings.anthropic_api_key
+    )
+
+
+def _llm_limits(db) -> tuple[int, int]:
+    cfg = db.get_app_config()
+    try:
+        daily_limit = int(cfg.get("llm.daily_limit", 0) or 0)
+    except (TypeError, ValueError):
+        daily_limit = 0
+    try:
+        cooldown_seconds = int(cfg.get("llm.cooldown_seconds", 0) or 0)
+    except (TypeError, ValueError):
+        cooldown_seconds = 0
+    return max(0, daily_limit), max(0, cooldown_seconds)
+
+
+def _check_and_consume_llm_quota(
+    db,
+    *,
+    user_id: int,
+    now,
+    lang: str,
+    cooldown_message_en: str,
+    cooldown_message_uk: str,
+) -> str | None:
+    day_key = now.date().isoformat()
+    usage = db.get_llm_usage(user_id, day_key)
+    daily_limit, cooldown_seconds = _llm_limits(db)
+
+    if daily_limit > 0 and usage.request_count >= daily_limit:
+        return localize(
+            lang,
+            f"Daily /llm limit reached ({daily_limit}). Try again tomorrow.",
+            f"Денний ліміт /llm вичерпано ({daily_limit}). Спробуй завтра.",
+        )
+    if cooldown_seconds > 0 and usage.last_request_at and (now - usage.last_request_at).total_seconds() < cooldown_seconds:
+        return localize(lang, cooldown_message_en, cooldown_message_uk)
+
+    db.increment_llm_usage(user_id, day_key, now)
+    return None
 
 
 def _quest_pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, dict[str, object]]:
@@ -523,13 +570,78 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(localize(lang, "Agent runtime is currently disabled by admin.", "Середовище агента зараз вимкнено адміністратором."))
         return
 
+    model_cfg = load_model_config(settings.agent_models_path)
+    available_tiers = list(model_cfg.tiers.keys())
+    app_default_raw = str(db.get_app_config_value("agent.default_tier") or model_cfg.default_tier)
+    app_default_tier = resolve_available_tier(app_default_raw, available_tiers) or model_cfg.default_tier
+    user_settings = db.get_settings(user_id)
+    preferred_tier = resolve_available_tier(user_settings.preferred_tier, available_tiers)
+    active_tier = preferred_tier or app_default_tier
+
     if context.args and context.args[0].lower() == "models":
-        cfg = load_model_config(settings.agent_models_path)
-        rows = [f"Default tier: {cfg.default_tier}"]
-        for tier_name, tier in cfg.tiers.items():
+        rows = [f"Default tier: {model_cfg.default_tier}"]
+        for tier_name, tier in model_cfg.tiers.items():
             ids = ", ".join(m.id for m in tier.models[:4])
             rows.append(f"- {tier_name}: {ids}")
         await update.effective_message.reply_text("\n".join(rows))
+        return
+
+    if context.args and context.args[0].lower() == "health":
+        tier_spec = model_cfg.get_tier(active_tier)
+        primary_model = tier_spec.models[0].id if tier_spec and tier_spec.models else "n/a"
+        daily_limit, cooldown_seconds = _llm_limits(db)
+        key_rows = [
+            f"- OpenRouter key: {'set' if settings.openrouter_api_key else 'missing'}",
+            f"- OpenAI key: {'set' if settings.openai_api_key else 'missing'}",
+            f"- Google key: {'set' if settings.google_api_key else 'missing'}",
+            f"- Anthropic key: {'set' if settings.anthropic_api_key else 'missing'}",
+        ]
+        last = db.get_last_user_llm_audit(user_id)
+        if last:
+            payload = last.get("payload") if isinstance(last.get("payload"), dict) else {}
+            last_status = str(payload.get("status", "unknown"))
+            last_model = str(payload.get("model", "unknown"))
+            last_tier = str(payload.get("tier", "unknown"))
+            last_line = (
+                f"- Last: {last_status} | {last_model} | tier={last_tier} | {last.get('created_at')}"
+            )
+        else:
+            last_line = "- Last: no LLM calls yet"
+
+        await update.effective_message.reply_text(
+            (
+                "LLM Health\n"
+                f"- Active tier: {active_tier}\n"
+                f"- Preferred tier: {preferred_tier or 'default'}\n"
+                f"- Default tier: {app_default_tier}\n"
+                f"- Primary model: {primary_model}\n"
+                f"- Daily limit: {'unlimited' if daily_limit == 0 else daily_limit}\n"
+                f"- Cooldown: {cooldown_seconds}s\n"
+                "Keys:\n"
+                f"{chr(10).join(key_rows)}\n"
+                f"{last_line}"
+            )
+        )
+        return
+
+    if context.args and context.args[0].lower() == "tier":
+        await update.effective_message.reply_text(
+            localize(
+                lang,
+                "Tier control moved to /settings tier. Example: /settings tier open_source",
+                "Керування tier перенесено в /settings tier. Приклад: /settings tier open_source",
+            )
+        )
+        return
+
+    if context.args and context.args[0].lower() in {"gpt", "claude", "gemini"}:
+        await update.effective_message.reply_text(
+            localize(
+                lang,
+                "Provider shortcuts were removed. Use /settings tier gpt|claude|gemini, then /llm <question>.",
+                "Скорочення провайдерів прибрано. Використай /settings tier gpt|claude|gemini, потім /llm <запит>.",
+            )
+        )
         return
 
     # --- Quests 2.0 manual generation ---
@@ -593,26 +705,21 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-        has_any_key = (
-            settings.openrouter_api_key
-            or settings.openai_api_key
-            or settings.google_api_key
-            or settings.anthropic_api_key
-        )
-        if not has_any_key:
+        if not _has_any_llm_key(settings):
             await update.effective_message.reply_text(t("llm_disabled_key", lang))
             return
 
-        day_key = now.date().isoformat()
-        usage = db.get_llm_usage(user_id, day_key)
-        if usage.request_count >= LLM_DAILY_LIMIT:
-            await update.effective_message.reply_text(localize(lang, "Daily /llm limit reached. Try again tomorrow.", "Денний ліміт /llm вичерпано. Спробуй завтра."))
+        limit_msg = _check_and_consume_llm_quota(
+            db,
+            user_id=user_id,
+            now=now,
+            lang=lang,
+            cooldown_message_en="Please wait a bit before the next /llm request.",
+            cooldown_message_uk="Зачекай трохи перед наступним /llm запитом.",
+        )
+        if limit_msg:
+            await update.effective_message.reply_text(limit_msg)
             return
-        if usage.last_request_at and (now - usage.last_request_at).total_seconds() < LLM_COOLDOWN_SECONDS:
-            await update.effective_message.reply_text(localize(lang, "Please wait a bit before the next /llm request.", "Зачекай трохи перед наступним /llm запитом."))
-            return
-
-        db.increment_llm_usage(user_id, day_key, now)
         pending = await update.effective_message.reply_text(localize(lang, "Generating quest...", "Генерую квест..."))
 
         stats = _weekly_stats(db, user_id, now - timedelta(days=28), now)
@@ -656,7 +763,6 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             memory_lines=memory_lines[:6],
         )
 
-        user_settings = db.get_settings(user_id)
         result = run_llm_text(
             db=db,
             settings=settings,
@@ -667,7 +773,7 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "You create productivity quests. "
                 "Output exactly one valid JSON object. No markdown, no prose."
             ),
-            tier_override=user_settings.preferred_tier,
+            tier_override=active_tier,
             max_tokens=520,
         )
         answer = str(result.get("answer", "")).strip()
@@ -696,7 +802,7 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     "Output exactly one valid JSON object for the quest schema. "
                     "No markdown, no prose."
                 ),
-                tier_override=user_settings.preferred_tier,
+                tier_override=active_tier,
                 max_tokens=520,
             )
             retry_answer = str(retry_result.get("answer", "")).strip()
@@ -805,24 +911,32 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not question:
             await update.effective_message.reply_text(localize(lang, "Usage: /llm chat <message>", "Використання: /llm chat <повідомлення>"))
             return
-        has_any_key = settings.openrouter_api_key or settings.openai_api_key or settings.google_api_key or settings.anthropic_api_key
-        if not has_any_key:
+        if not _has_any_llm_key(settings):
             await update.effective_message.reply_text(t("llm_disabled_key", lang))
             return
-        day_key = now.date().isoformat()
-        usage = db.get_llm_usage(user_id, day_key)
-        if usage.request_count >= LLM_DAILY_LIMIT:
-            await update.effective_message.reply_text(localize(lang, "Daily /llm limit reached. Try again tomorrow.", "Денний ліміт /llm вичерпано. Спробуй завтра."))
+        limit_msg = _check_and_consume_llm_quota(
+            db,
+            user_id=user_id,
+            now=now,
+            lang=lang,
+            cooldown_message_en="Please wait a bit before the next message.",
+            cooldown_message_uk="Зачекай трохи перед наступним повідомленням.",
+        )
+        if limit_msg:
+            await update.effective_message.reply_text(limit_msg)
             return
-        if usage.last_request_at and (now - usage.last_request_at).total_seconds() < LLM_COOLDOWN_SECONDS:
-            await update.effective_message.reply_text(localize(lang, "Please wait a bit before the next message.", "Зачекай трохи перед наступним повідомленням."))
-            return
-        db.increment_llm_usage(user_id, day_key, now)
         if update.effective_chat:
             await update.effective_chat.send_action(ChatAction.TYPING)
         pending = await update.effective_message.reply_text(localize(lang, "Thinking...", "Думаю..."))
-        user_settings = db.get_settings(user_id)
-        result = run_llm_agent(db=db, settings=settings, user_id=user_id, now=now, question=question, tier_override=user_settings.preferred_tier, is_chat_mode=True)
+        result = run_llm_agent(
+            db=db,
+            settings=settings,
+            user_id=user_id,
+            now=now,
+            question=question,
+            tier_override=active_tier,
+            is_chat_mode=True,
+        )
         answer = str(result.get("answer", "")).strip()
         model_used = str(result.get("model", "unknown"))
         if not answer:
@@ -861,70 +975,27 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    # --- Tier subcommand ---
-    tier_override: str | None = None
-    model_preference: str | None = None
-    question_args = context.args
-    if context.args and context.args[0].lower() == "tier":
-        valid_tiers = ("free", "open_source_cheap", "top_tier")
-        if len(context.args) < 2:
-            user_settings = db.get_settings(user_id)
-            current = user_settings.preferred_tier or "default"
-            await update.effective_message.reply_text(
-                localize(lang, f"Current tier: {current}\nSet: /llm tier <{'|'.join(valid_tiers)}>\nReset: /llm tier default", f"Поточний рівень: {current}\nВстановити: /llm tier <{'|'.join(valid_tiers)}>\nСкинути: /llm tier default")
-            )
-            return
-        requested = context.args[1].strip().lower()
-        if requested == "default":
-            db.update_preferred_tier(user_id, None)
-            await update.effective_message.reply_text(localize(lang, "Tier reset to default.", "Рівень скинуто до стандартного."))
-            return
-        if requested not in valid_tiers:
-            if len(context.args) >= 3:
-                # /llm tier <name> <question>
-                tier_override = requested
-                question_args = context.args[2:]
-            else:
-                await update.effective_message.reply_text(localize(lang, f"Unknown tier. Choose: {', '.join(valid_tiers)}", f"Невідомий рівень. Обери: {', '.join(valid_tiers)}"))
-                return
-        elif len(context.args) >= 3:
-            tier_override = requested
-            question_args = context.args[2:]
-        else:
-            db.update_preferred_tier(user_id, requested)
-            await update.effective_message.reply_text(localize(lang, f"Tier set to {requested}.", f"Рівень встановлено: {requested}."))
-            return
-
-    if not tier_override and context.args and len(context.args) >= 2 and context.args[0].lower() in ("gpt", "claude", "gemini"):
-        model_preference = context.args[0].lower()
-        tier_override = "top_tier"
-        question_args = context.args[1:]
-
-    # Use saved tier preference as fallback
-    if not tier_override:
-        user_settings = db.get_settings(user_id)
-        if user_settings.preferred_tier:
-            tier_override = user_settings.preferred_tier
-    # Require at least one API key
-    if not model_preference and not settings.openrouter_api_key:
+    if not _has_any_llm_key(settings):
         await update.effective_message.reply_text(t("llm_disabled_key", lang))
         return
 
-    question = " ".join(question_args).strip()
+    question = " ".join(context.args).strip()
     if not question:
         await update.effective_message.reply_text(t("llm_usage", lang))
         return
 
-    day_key = now.date().isoformat()
-    usage = db.get_llm_usage(user_id, day_key)
-    if usage.request_count >= LLM_DAILY_LIMIT:
-        await update.effective_message.reply_text(localize(lang, "Daily /llm limit reached. Try again tomorrow.", "Денний ліміт /llm вичерпано. Спробуй завтра."))
-        return
-    if usage.last_request_at and (now - usage.last_request_at).total_seconds() < LLM_COOLDOWN_SECONDS:
-        await update.effective_message.reply_text(localize(lang, "Please wait a bit before the next /llm question.", "Зачекай трохи перед наступним /llm запитом."))
+    limit_msg = _check_and_consume_llm_quota(
+        db,
+        user_id=user_id,
+        now=now,
+        lang=lang,
+        cooldown_message_en="Please wait a bit before the next /llm question.",
+        cooldown_message_uk="Зачекай трохи перед наступним /llm запитом.",
+    )
+    if limit_msg:
+        await update.effective_message.reply_text(limit_msg)
         return
 
-    db.increment_llm_usage(user_id, day_key, now)
     pending = await update.effective_message.reply_text(f"🤖 {t('llm_working', lang)}")
     result = run_llm_agent(
         db=db,
@@ -932,8 +1003,7 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id=user_id,
         now=now,
         question=question,
-        tier_override=tier_override,
-        model_preference=model_preference,
+        tier_override=active_tier,
     )
     answer = str(result.get("answer", "")).strip()
     model_used = str(result.get("model", "unknown"))

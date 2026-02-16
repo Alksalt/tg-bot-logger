@@ -24,6 +24,15 @@ def test_model_config_loads_default_tier() -> None:
     assert "free" in cfg.tiers
 
 
+def test_free_tier_prefers_arcee_and_not_openrouter_free() -> None:
+    cfg = load_model_config(path=Path("agents/models.yaml"))
+    free = cfg.get_tier("free")
+    assert free is not None
+    model_ids = [m.id for m in free.models]
+    assert model_ids[0] == "arcee-ai/trinity-large-preview:free"
+    assert "openrouter/free" not in model_ids
+
+
 def test_tier_order_escalation() -> None:
     cfg = load_model_config(path=Path("agents/models.yaml"))
     order_no = get_tier_order(cfg, requested_tier="free", allow_escalation=False)
@@ -287,3 +296,22 @@ def test_run_llm_text_success_with_mocked_model(tmp_path, monkeypatch) -> None:
     assert res["status"] == "ok"
     assert res["model"] == "mock/model"
     assert res["answer"] == '{"title":"X"}'
+
+
+def test_get_last_user_llm_audit(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 2, 12)
+    db.add_admin_audit(
+        actor="user:123",
+        action="agent.run",
+        target="llm",
+        payload={"status": "ok", "model": "mock/model", "tier": "free"},
+        created_at=now,
+    )
+    last = db.get_last_user_llm_audit(123)
+    assert last is not None
+    assert last["action"] == "agent.run"
+    payload = last["payload"]
+    assert isinstance(payload, dict)
+    assert payload.get("status") == "ok"
+    assert payload.get("model") == "mock/model"

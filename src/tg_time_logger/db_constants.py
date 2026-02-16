@@ -47,6 +47,10 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "agent.max_total_tokens": 6000,
     "agent.reasoning_enabled": True,
     "agent.default_tier": "free",
+    # Single-user friendly defaults:
+    # 0 daily limit = unlimited, 0 cooldown = no enforced delay.
+    "llm.daily_limit": 0,
+    "llm.cooldown_seconds": 0,
     "search.cache_ttl_seconds": 21600,
     "search.provider_order": "brave,tavily,serper",
     "search.brave_enabled": True,

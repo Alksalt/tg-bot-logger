@@ -154,7 +154,9 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
       "agent.max_tool_calls",
       "agent.max_step_input_tokens",
       "agent.max_step_output_tokens",
-      "agent.max_total_tokens"
+      "agent.max_total_tokens",
+      "llm.daily_limit",
+      "llm.cooldown_seconds"
     ];
     const agentStringKeys = ["agent.default_tier", "i18n.default_language"];
     const searchBoolKeys = [

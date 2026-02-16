@@ -183,6 +183,37 @@ class SystemMixin:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_last_user_llm_audit(self: DbProtocol, user_id: int) -> dict[str, Any] | None:
+        actor = f"user:{user_id}"
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT action, payload_json, created_at
+                FROM admin_audit_log
+                WHERE actor = ?
+                  AND action IN ('agent.run', 'agent.chat', 'agent.direct')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (actor,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload: dict[str, Any] = {}
+        raw = row["payload_json"]
+        if isinstance(raw, str) and raw.strip():
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                payload = parsed
+        return {
+            "action": str(row["action"]),
+            "created_at": str(row["created_at"]),
+            "payload": payload,
+        }
+
     def add_admin_audit(
         self: DbProtocol,
         *,
