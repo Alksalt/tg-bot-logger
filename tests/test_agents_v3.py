@@ -33,6 +33,16 @@ def test_free_tier_prefers_arcee_and_not_openrouter_free() -> None:
     assert "openrouter/free" not in model_ids
 
 
+def test_provider_tiers_keep_openrouter_fallbacks() -> None:
+    cfg = load_model_config(path=Path("agents/models.yaml"))
+    for tier_name in ("gpt", "gemini", "claude"):
+        tier = cfg.get_tier(tier_name)
+        assert tier is not None
+        providers = {m.provider for m in tier.models}
+        assert tier_name in {"gpt", "gemini", "claude"}
+        assert "openrouter" in providers
+
+
 def test_tier_order_escalation() -> None:
     cfg = load_model_config(path=Path("agents/models.yaml"))
     order_no = get_tier_order(cfg, requested_tier="free", allow_escalation=False)

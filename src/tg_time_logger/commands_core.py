@@ -54,6 +54,71 @@ def _has_any_llm_key(settings) -> bool:
     )
 
 
+def _quest_candidate_tiers(settings, active_tier: str, available_tiers: list[str]) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    available = set(available_tiers)
+
+    def add(tier: str) -> None:
+        if tier in available and tier not in seen:
+            candidates.append(tier)
+            seen.add(tier)
+
+    add(active_tier)
+    if settings.openai_api_key:
+        add("gpt")
+    if settings.anthropic_api_key:
+        add("claude")
+    if settings.google_api_key:
+        add("gemini")
+    if settings.openrouter_api_key:
+        add("open_source")
+        add("free")
+        add("top")
+    return candidates[:6]
+
+
+def _build_quest_json_repair_prompt(
+    *,
+    raw_answer: str,
+    difficulty: str,
+    duration_days: int,
+    min_target: int,
+    reward_lo: int,
+    reward_hi: int,
+) -> str:
+    raw = raw_answer.strip()
+    if len(raw) > 3500:
+        raw = raw[:3500]
+    return (
+        "Convert the text below into exactly one valid JSON object for a quest.\n"
+        "If the text is incomplete, infer missing fields while following constraints.\n"
+        "Return JSON object only. No markdown.\n\n"
+        "Constraints:\n"
+        f"- difficulty must be {difficulty}\n"
+        f"- duration_days must be {duration_days}\n"
+        f"- condition.type must be total_minutes\n"
+        f"- condition.target_minutes must be >= {min_target}\n"
+        "- condition.category must be build|study|training|all\n"
+        f"- reward_fun_minutes must be integer in [{reward_lo}, {reward_hi}]\n"
+        "- penalty_fun_minutes must equal reward_fun_minutes\n\n"
+        "Required keys:\n"
+        "{\n"
+        '  "title": "short unique title",\n'
+        '  "description": "one sentence",\n'
+        '  "quest_type": "challenge",\n'
+        f'  "difficulty": "{difficulty}",\n'
+        f'  "duration_days": {duration_days},\n'
+        f'  "condition": {{"type":"total_minutes","target_minutes":{min_target},"category":"build"}},\n'
+        f'  "reward_fun_minutes": {reward_lo},\n'
+        f'  "penalty_fun_minutes": {reward_lo},\n'
+        '  "extra_benefit": "optional text"\n'
+        "}\n\n"
+        "Source text:\n"
+        f"{raw}"
+    )
+
+
 def _llm_limits(db) -> tuple[int, int]:
     cfg = db.get_app_config()
     try:
@@ -763,61 +828,94 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             memory_lines=memory_lines[:6],
         )
 
-        result = run_llm_text(
-            db=db,
-            settings=settings,
-            user_id=user_id,
-            now=now,
-            prompt=prompt,
-            system_prompt=(
-                "You create productivity quests. "
-                "Output exactly one valid JSON object. No markdown, no prose."
-            ),
-            tier_override=active_tier,
-            max_tokens=520,
+        compact_prompt = _build_quest_generation_prompt(
+            difficulty=difficulty,
+            duration_days=duration_days,
+            min_target=min_target,
+            reward_lo=reward_lo,
+            reward_hi=reward_hi,
+            stats=stats,
+            recent_quest_lines=[],
+            memory_lines=[],
         )
-        answer = str(result.get("answer", "")).strip()
-        model_used = str(result.get("model", "unknown"))
-        status = str(result.get("status", "unknown"))
-        payload = extract_quest_payload(answer)
+        quest_system_prompt = (
+            "You create productivity quests. "
+            "Output exactly one valid JSON object. No markdown, no prose."
+        )
+        repair_system_prompt = (
+            "You normalize output into strict JSON objects. "
+            "Return exactly one JSON object, no prose."
+        )
+        candidate_tiers = _quest_candidate_tiers(settings, active_tier, available_tiers)
+
+        answer = ""
+        model_used = "unknown"
+        status = "unknown"
+        payload = None
+        attempt_lines: list[str] = []
+
+        for attempt_tier in candidate_tiers:
+            for prompt_label, prompt_text in (("full", prompt), ("compact", compact_prompt)):
+                result = run_llm_text(
+                    db=db,
+                    settings=settings,
+                    user_id=user_id,
+                    now=now,
+                    prompt=prompt_text,
+                    system_prompt=quest_system_prompt,
+                    tier_override=attempt_tier,
+                    allow_tier_escalation=False,
+                    max_tokens=520,
+                )
+                answer = str(result.get("answer", "")).strip()
+                model_used = str(result.get("model", "unknown"))
+                status = str(result.get("status", "unknown"))
+                attempt_lines.append(f"{attempt_tier}/{prompt_label}:{status}:{model_used}")
+                payload = extract_quest_payload(answer)
+                if payload:
+                    break
+
+                if answer:
+                    repair_prompt = _build_quest_json_repair_prompt(
+                        raw_answer=answer,
+                        difficulty=difficulty,
+                        duration_days=duration_days,
+                        min_target=min_target,
+                        reward_lo=reward_lo,
+                        reward_hi=reward_hi,
+                    )
+                    repair_result = run_llm_text(
+                        db=db,
+                        settings=settings,
+                        user_id=user_id,
+                        now=now,
+                        prompt=repair_prompt,
+                        system_prompt=repair_system_prompt,
+                        tier_override=attempt_tier,
+                        allow_tier_escalation=False,
+                        max_tokens=420,
+                    )
+                    repair_answer = str(repair_result.get("answer", "")).strip()
+                    repair_model = str(repair_result.get("model", "unknown"))
+                    repair_status = str(repair_result.get("status", "unknown"))
+                    attempt_lines.append(f"{attempt_tier}/repair:{repair_status}:{repair_model}")
+                    repair_payload = extract_quest_payload(repair_answer)
+                    if repair_payload:
+                        payload = repair_payload
+                        answer = repair_answer
+                        model_used = repair_model
+                        status = repair_status
+                        break
+            if payload:
+                break
+
         if not payload:
-            # Recovery path: retry once with a compact prompt and no history blocks.
-            compact_prompt = _build_quest_generation_prompt(
-                difficulty=difficulty,
-                duration_days=duration_days,
-                min_target=min_target,
-                reward_lo=reward_lo,
-                reward_hi=reward_hi,
-                stats=stats,
-                recent_quest_lines=[],
-                memory_lines=[],
-            )
-            retry_result = run_llm_text(
-                db=db,
-                settings=settings,
-                user_id=user_id,
-                now=now,
-                prompt=compact_prompt,
-                system_prompt=(
-                    "Output exactly one valid JSON object for the quest schema. "
-                    "No markdown, no prose."
-                ),
-                tier_override=active_tier,
-                max_tokens=520,
-            )
-            retry_answer = str(retry_result.get("answer", "")).strip()
-            retry_payload = extract_quest_payload(retry_answer)
-            if retry_payload:
-                payload = retry_payload
-                answer = retry_answer
-                model_used = str(retry_result.get("model", model_used))
-                status = str(retry_result.get("status", status))
-        if not payload:
+            attempts_short = "; ".join(attempt_lines[-6:]) if attempt_lines else "none"
             await pending.edit_text(
                 localize(
                     lang,
-                    f"Could not parse quest JSON. Try again. (status: {status})",
-                    f"Не вдалося розібрати JSON квесту. Спробуй ще раз. (status: {status})",
+                    f"Could not parse quest JSON. Try again. (status: {status}, attempts: {attempts_short})",
+                    f"Не вдалося розібрати JSON квесту. Спробуй ще раз. (status: {status}, спроби: {attempts_short})",
                 )
             )
             return

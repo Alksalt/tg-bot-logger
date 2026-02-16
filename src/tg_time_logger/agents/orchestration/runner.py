@@ -100,6 +100,7 @@ def run_llm_agent(
     question: str,
     tier_override: str | None = None,
     model_preference: str | None = None,
+    allow_tier_escalation: bool = True,
     is_chat_mode: bool = False,
 ) -> dict[str, Any]:
     cfg = db.get_app_config()
@@ -172,7 +173,7 @@ def run_llm_agent(
         context_text=context_text,
         directive_text=directive,
         requested_tier=requested_tier,
-        allow_tier_escalation=True,
+        allow_tier_escalation=allow_tier_escalation,
         model_preference=model_preference,
     )
     tool_ctx = ToolContext(
@@ -244,6 +245,7 @@ def run_llm_text(
     system_prompt: str | None = "Return strict JSON only when asked. No markdown.",
     tier_override: str | None = None,
     model_preference: str | None = None,
+    allow_tier_escalation: bool = True,
     max_tokens: int = 480,
 ) -> dict[str, Any]:
     cfg = db.get_app_config()
@@ -282,7 +284,7 @@ def run_llm_text(
     llm, failures = loop._call_models(
         messages,
         requested_tier=requested_tier,
-        allow_tier_escalation=True,
+        allow_tier_escalation=allow_tier_escalation,
         max_tokens=max(64, min(int(max_tokens), 1400)),
         model_preference=model_preference,
     )
