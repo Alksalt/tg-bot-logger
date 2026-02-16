@@ -62,14 +62,6 @@ def _quest_cleanup(context: ContextTypes.DEFAULT_TYPE, now_iso: str) -> None:
         store.pop(t, None)
 
 
-def _load_quest_skill_text(settings) -> str:
-    path = settings.agent_directive_path.parent / "skills" / "quest_builder.md"
-    if not path.exists():
-        return ""
-    text = path.read_text().strip()
-    return text[:6000] if text else ""
-
-
 def _build_quest_generation_prompt(
     *,
     difficulty: str,
@@ -80,13 +72,12 @@ def _build_quest_generation_prompt(
     stats: dict[str, object],
     recent_quest_lines: list[str],
     memory_lines: list[str],
-    skill_text: str,
 ) -> str:
     recent_block = "\n".join(f"- {x}" for x in recent_quest_lines) if recent_quest_lines else "- none"
     memory_block = "\n".join(f"- {x}" for x in memory_lines) if memory_lines else "- none"
-    skill_block = f"\nSkill directive:\n{skill_text}\n" if skill_text else ""
     return (
         "Create exactly one quest proposal as JSON object only (no markdown, no commentary).\n"
+        "Return strictly valid JSON. All numeric fields must be integers.\n"
         "This user is build-first: target around 60-70% build focus over time. "
         "Study and training should be supportive additions.\n"
         f"Requested difficulty: {difficulty}\n"
@@ -106,7 +97,10 @@ def _build_quest_generation_prompt(
         f"{recent_block}\n\n"
         "Quest memory hints:\n"
         f"{memory_block}\n"
-        f"{skill_block}\n"
+        "Rules:\n"
+        f"- condition.target_minutes must be >= {min_target}\n"
+        f"- reward_fun_minutes must be an integer in [{reward_lo}, {reward_hi}]\n"
+        "- penalty_fun_minutes must equal reward_fun_minutes\n\n"
         "Return JSON with keys:\n"
         "{\n"
         '  "title": "short unique title",\n'
@@ -114,9 +108,9 @@ def _build_quest_generation_prompt(
         '  "quest_type": "challenge",\n'
         f'  "difficulty": "{difficulty}",\n'
         f'  "duration_days": {duration_days},\n'
-        '  "condition": {"type":"total_minutes","target_minutes":<int>,"category":"build|study|training|all"},\n'
-        f'  "reward_fun_minutes": <{reward_lo}-{reward_hi}>,\n'
-        '  "penalty_fun_minutes": "same as reward",\n'
+        f'  "condition": {{"type":"total_minutes","target_minutes":{min_target},"category":"build"}},\n'
+        f'  "reward_fun_minutes": {reward_lo},\n'
+        f'  "penalty_fun_minutes": {reward_lo},\n'
         '  "extra_benefit": "optional text, especially for hard quests"\n'
         "}\n"
     )
@@ -651,7 +645,6 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if "quest" in tags or "quest" in mem.content.lower():
                 memory_lines.append(f"{mem.content[:180]}")
 
-        skill_text = _load_quest_skill_text(settings)
         prompt = _build_quest_generation_prompt(
             difficulty=difficulty,
             duration_days=duration_days,
@@ -659,9 +652,8 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reward_lo=reward_lo,
             reward_hi=reward_hi,
             stats=stats,
-            recent_quest_lines=recent_lines[:20],
-            memory_lines=memory_lines[:12],
-            skill_text=skill_text,
+            recent_quest_lines=recent_lines[:8],
+            memory_lines=memory_lines[:6],
         )
 
         user_settings = db.get_settings(user_id)
@@ -675,13 +667,41 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         answer = str(result.get("answer", "")).strip()
         model_used = str(result.get("model", "unknown"))
+        status = str(result.get("status", "unknown"))
         payload = extract_quest_payload(answer)
+        if not payload:
+            # Recovery path: retry once with a compact prompt and no history blocks.
+            compact_prompt = _build_quest_generation_prompt(
+                difficulty=difficulty,
+                duration_days=duration_days,
+                min_target=min_target,
+                reward_lo=reward_lo,
+                reward_hi=reward_hi,
+                stats=stats,
+                recent_quest_lines=[],
+                memory_lines=[],
+            )
+            retry_result = run_llm_agent(
+                db=db,
+                settings=settings,
+                user_id=user_id,
+                now=now,
+                question=compact_prompt,
+                tier_override=user_settings.preferred_tier,
+            )
+            retry_answer = str(retry_result.get("answer", "")).strip()
+            retry_payload = extract_quest_payload(retry_answer)
+            if retry_payload:
+                payload = retry_payload
+                answer = retry_answer
+                model_used = str(retry_result.get("model", model_used))
+                status = str(retry_result.get("status", status))
         if not payload:
             await pending.edit_text(
                 localize(
                     lang,
-                    "Could not parse quest JSON. Try again.",
-                    "Не вдалося розібрати JSON квесту. Спробуй ще раз.",
+                    f"Could not parse quest JSON. Try again. (status: {status})",
+                    f"Не вдалося розібрати JSON квесту. Спробуй ще раз. (status: {status})",
                 )
             )
             return

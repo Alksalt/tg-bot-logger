@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import math
 import random
@@ -229,39 +230,144 @@ def _validate_llm_quest(
     }
 
 
+def _looks_like_quest_payload(payload: dict[str, Any]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if not isinstance(payload.get("condition"), dict):
+        return False
+    return "title" in payload and "description" in payload
+
+
+def _json_like_loads(text: str) -> dict[str, Any] | None:
+    raw = text.strip()
+    if not raw:
+        return None
+
+    normalized = (
+        raw.replace("“", '"')
+        .replace("”", '"')
+        .replace("’", "'")
+    )
+    normalized = re.sub(r",\s*([}\]])", r"\1", normalized)
+
+    try:
+        parsed = json.loads(normalized)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, str):
+        return _json_like_loads(parsed)
+
+    try:
+        literal = ast.literal_eval(normalized)
+    except (SyntaxError, ValueError):
+        return None
+    return literal if isinstance(literal, dict) else None
+
+
+def _extract_balanced_objects(text: str, limit: int = 12) -> list[str]:
+    chunks: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    quote = ""
+    escape = False
+
+    for idx, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == quote:
+                in_string = False
+                quote = ""
+            continue
+
+        if ch in {'"', "'"}:
+            in_string = True
+            quote = ch
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+            continue
+
+        if ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                chunks.append(text[start : idx + 1])
+                if len(chunks) >= limit:
+                    break
+                start = -1
+
+    return chunks
+
+
+def _unwrap_quest_payload(obj: dict[str, Any], depth: int = 0) -> dict[str, Any] | None:
+    if depth > 3:
+        return None
+    if _looks_like_quest_payload(obj):
+        return obj
+
+    for key in ("quest", "payload", "data", "result"):
+        nested = obj.get(key)
+        if isinstance(nested, dict):
+            found = _unwrap_quest_payload(nested, depth + 1)
+            if found:
+                return found
+
+    answer = obj.get("answer")
+    if isinstance(answer, dict):
+        found = _unwrap_quest_payload(answer, depth + 1)
+        if found:
+            return found
+    if isinstance(answer, str):
+        found = extract_quest_payload(answer)
+        if found:
+            return found
+
+    return None
+
+
 def extract_quest_payload(text: str) -> dict[str, Any] | None:
     raw = text.strip()
     if not raw:
         return None
 
-    # Try plain JSON first.
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
+    snippets: list[str] = [raw]
+    seen: set[str] = {raw}
 
-    # Try fenced JSON block.
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL | re.IGNORECASE)
-    if fenced:
-        try:
-            data = json.loads(fenced.group(1))
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            pass
+    for m in re.finditer(r"```(?:json|json5)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE):
+        snippet = m.group(1).strip()
+        if snippet and snippet not in seen:
+            snippets.append(snippet)
+            seen.add(snippet)
 
-    # Last resort: first object-like range.
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        data = json.loads(raw[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return data if isinstance(data, dict) else None
+    for snippet in _extract_balanced_objects(raw):
+        s = snippet.strip()
+        if s and s not in seen:
+            snippets.append(s)
+            seen.add(s)
+
+    parsed_fallback: dict[str, Any] | None = None
+    for snippet in snippets:
+        parsed = _json_like_loads(snippet)
+        if not parsed:
+            continue
+        found = _unwrap_quest_payload(parsed)
+        if found:
+            return found
+        if parsed_fallback is None:
+            parsed_fallback = parsed
+
+    return parsed_fallback
 
 
 def ensure_weekly_quests(

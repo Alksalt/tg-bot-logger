@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from tg_time_logger.db import Database
 from tg_time_logger.quests import (
     _validate_llm_quest,
+    extract_quest_payload,
     quest_min_target_minutes,
     quest_reward_bounds,
     sync_quests_for_user,
@@ -77,3 +78,54 @@ def test_sync_quests_applies_penalty_once(tmp_path) -> None:
     assert len(second.failed) == 0
     assert second.penalty_minutes_applied == 0
     assert db.sum_minutes(user_id, "spend") == 120
+
+
+def test_extract_quest_payload_unwraps_answer_wrapper() -> None:
+    wrapped = (
+        '{"action":"answer","answer":"{\\"title\\":\\"Build Marathon\\",'
+        '\\"description\\":\\"Ship one production feature\\",'
+        '\\"quest_type\\":\\"challenge\\",'
+        '\\"difficulty\\":\\"medium\\",'
+        '\\"duration_days\\":7,'
+        '\\"condition\\":{\\"type\\":\\"total_minutes\\",\\"target_minutes\\":720,\\"category\\":\\"build\\"},'
+        '\\"reward_fun_minutes\\":75,'
+        '\\"penalty_fun_minutes\\":75}"}'
+    )
+    payload = extract_quest_payload(wrapped)
+    assert payload is not None
+    assert payload["title"] == "Build Marathon"
+    assert payload["condition"]["target_minutes"] == 720
+
+
+def test_extract_quest_payload_handles_json_like_output() -> None:
+    raw = """
+Here is your quest:
+```json
+{
+  'title': '7-Day Builder Push',
+  'description': 'Ship meaningful build output daily.',
+  'quest_type': 'challenge',
+  'difficulty': 'medium',
+  'duration_days': 7,
+  'condition': {'type': 'total_minutes', 'target_minutes': 780, 'category': 'build'},
+  'reward_fun_minutes': 90,
+  'penalty_fun_minutes': 90,
+}
+```
+"""
+    payload = extract_quest_payload(raw)
+    assert payload is not None
+    assert payload["difficulty"] == "medium"
+    assert payload["condition"]["category"] == "build"
+
+
+def test_extract_quest_payload_picks_valid_object_from_multi_object_text() -> None:
+    raw = """
+Template:
+{"title":"template only"}
+Final:
+{"title":"Execution Ramp","description":"Push build minutes every day.","quest_type":"challenge","difficulty":"easy","duration_days":7,"condition":{"type":"total_minutes","target_minutes":320,"category":"build"},"reward_fun_minutes":35,"penalty_fun_minutes":35}
+"""
+    payload = extract_quest_payload(raw)
+    assert payload is not None
+    assert payload["title"] == "Execution Ramp"
