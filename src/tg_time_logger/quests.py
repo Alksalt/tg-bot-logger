@@ -254,6 +254,12 @@ def evaluate_quest_progress(db: Database, user_id: int, quest: Quest, now: datet
         target_minutes = int(condition.get("target", 0) * 60)
         week = week_range_for(now)
         totals = db.daily_totals(user_id, "productive", week.start.date(), week.end.date())
+        # Subtract job minutes from totals
+        job_totals = db.daily_totals(user_id, "productive", week.start.date(), week.end.date(), category="job")
+        for day, m in job_totals.items():
+            if day in totals:
+                totals[day] = max(0, totals[day] - m)
+
         best = max(totals.values(), default=0)
         return QuestProgress(quest, best, target_minutes, "min", best >= target_minutes)
 
@@ -261,6 +267,9 @@ def evaluate_quest_progress(db: Database, user_id: int, quest: Quest, now: datet
         target_minutes = int(condition.get("target", 0) * 60)
         week = week_range_for(now)
         current = db.sum_minutes(user_id, "productive", start=week.start, end=now)
+        # Exclude job minutes
+        job_minutes = db.sum_minutes(user_id, "productive", start=week.start, end=now, category="job")
+        current = max(0, current - job_minutes)
         return QuestProgress(quest, current, target_minutes, "min", current >= target_minutes)
 
     if ctype == "no_fun_day":
@@ -291,6 +300,11 @@ def evaluate_quest_progress(db: Database, user_id: int, quest: Quest, now: datet
         min_minutes = min_hours * 60
         week = week_range_for(now)
         totals = db.daily_totals(user_id, "productive", week.start.date(), week.end.date())
+        job_totals = db.daily_totals(user_id, "productive", week.start.date(), week.end.date(), category="job")
+        for day, m in job_totals.items():
+            if day in totals:
+                totals[day] = max(0, totals[day] - m)
+
         longest = 0
         running = 0
         day = week.start.date()

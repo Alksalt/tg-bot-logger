@@ -28,7 +28,9 @@ src/tg_time_logger/
   commands_todo.py                   # /todo
   commands_shared.py                 # shared helpers: touch_user, get_db, get_settings, build_keyboard
   config.py                         # Settings dataclass from env vars
-  db.py                             # Database class with 18 migrations, all DB methods
+  config.py                         # Settings dataclass from env vars
+  db_repo/                          # Database repositories (users, logs, gamification, etc.)
+  db.py                             # Database facade inheriting from db_repo mixins
   db_models.py                      # frozen dataclasses for all DB entities
   db_converters.py                  # sqlite3.Row → dataclass converters
   db_constants.py                   # default config values
@@ -97,7 +99,7 @@ tests/                              # pytest, plain functions + classes, tmp_pat
 /shop            Shop items, buy, savings, streak freeze
 /notes (/rules)  Personal notes / rulebook
 /llm             AI analytics + chat mode + coaching
-/settings        Language, reminders, quiet hours
+/settings        Language, reminders, quiet hours, unspend
 /todo            Daily to-do list with auto-logging
 /help            Help and guide system
 ```
@@ -114,7 +116,8 @@ Handler order: help → core → quests → shop → settings → todo → unkno
 - Migrations auto-run on `Database.__init__`
 - All models are frozen dataclasses in `db_models.py`
 - Row-to-model converters in `db_converters.py`
-- All DB methods on the `Database` class in `db.py`
+- Row-to-model converters in `db_converters.py`
+- Core logic split into `db_repo/` mixins, aggregated in `db.py`
 
 ### Agent Runtime (V3)
 Single entry point: `runner.py:run_llm_agent()` with `is_chat_mode` parameter:
@@ -135,7 +138,7 @@ Tool system:
 
 ### Economy
 - Productive time (study/build/training/job) earns fun minutes at category-specific rates
-- Job is excluded from milestone calculations
+- Job category: 4m fun/hour ONLY. No XP, no streak impact, no milestone progress.
 - Level-up bonus scale: 40%
 - Fun time (`/spend`) costs fun minutes
 - Shop items cost fun minutes, savings fund locks minutes for expensive items

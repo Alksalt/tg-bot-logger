@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from tg_time_logger.db import APP_CONFIG_DEFAULTS, Database
+import pytest
+
+from tg_time_logger.db import Database
+from tg_time_logger.db_constants import APP_CONFIG_DEFAULTS
 from tg_time_logger.gamification import build_economy, fun_from_minutes
 
 

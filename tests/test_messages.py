@@ -35,6 +35,7 @@ def _view(productive_all: int, spent_all: int, deep_sessions: int = 0) -> Status
         week_plan_done_minutes=0,
         week_plan_target_minutes=0,
         week_plan_remaining_minutes=0,
+        fun_earned_this_week=0,
         economy=economy,
     )
 

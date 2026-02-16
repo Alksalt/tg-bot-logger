@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram import Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from tg_time_logger.commands_shared import get_db, get_user_language, touch_user
 from tg_time_logger.i18n import localize, normalize_language_code, t
@@ -69,6 +69,31 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.effective_message.reply_text(localize(lang, "Quiet hours set to {raw}", "Тихі години встановлено: {raw}", raw=raw))
         return
 
+    # --- unspend ---
+    if action == "unspend":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text(localize(lang, "Usage: /settings unspend <amount>", "Використання: /settings unspend <amount>"))
+            return
+        try:
+            amount = int(context.args[1])
+            if amount <= 0:
+                raise ValueError
+        except ValueError:
+            await update.effective_message.reply_text(localize(lang, "Invalid amount. Must be positive.", "Невірна кількість. Має бути більше 0."))
+            return
+
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ Yes, deduct", callback_data=f"unspend:y:{amount}"),
+                InlineKeyboardButton("❌ Cancel", callback_data="unspend:n"),
+            ]
+        ])
+        await update.effective_message.reply_text(
+            localize(lang, "Deduct {amount} fun minutes from balance?", "Відняти {amount} хвилин відпочинку з балансу?", amount=amount),
+            reply_markup=kb,
+        )
+        return
+
     await update.effective_message.reply_text(
         localize(lang, "Usage: /settings, /settings lang, /settings reminders, /settings quiet", "Використання: /settings, /settings lang, /settings reminders, /settings quiet")
     )
@@ -76,3 +101,36 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 def register_settings_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("settings", cmd_settings))
+    app.add_handler(CallbackQueryHandler(handle_unspend_callback, pattern=r"^unspend:"))
+
+
+async def handle_unspend_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+
+    user_id, _, now = touch_user(update, context)
+    db = get_db(context)
+    lang = get_user_language(context, user_id)
+    data = query.data or ""
+
+    if data == "unspend:n":
+        await query.message.edit_text(localize(lang, "Cancelled.", "Скасовано."))
+        return
+
+    # unspend:y:amount
+    parse = data.split(":")
+    if len(parse) < 3:
+        return
+    amount = int(parse[2])
+
+    db.add_entry(
+        user_id=user_id,
+        kind="spend",
+        category="spend",
+        minutes=amount,
+        note=f"Manual deduction (-{amount})",
+        created_at=now,
+        source="manual",
+    )
+    await query.message.edit_text(localize(lang, "Deducted {amount}m.", "Віднято {amount}хв.", amount=amount))

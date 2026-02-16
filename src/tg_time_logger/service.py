@@ -13,8 +13,10 @@ from tg_time_logger.gamification import (
     fun_from_minutes,
     level_from_xp,
     level_progress,
+    level_progress,
     streak_multiplier,
 )
+from datetime import timedelta
 from tg_time_logger.time_utils import week_range_for
 
 
@@ -47,6 +49,7 @@ class StatusView:
     week_plan_done_minutes: int
     week_plan_target_minutes: int
     week_plan_remaining_minutes: int
+    fun_earned_this_week: int
     economy: EconomyBreakdown
 
 
@@ -111,7 +114,11 @@ def add_productive_entry(
         deep_work_multiplier=deep_mult,
     )
 
-    streak = db.refresh_streak(user_id, created_at)
+    if normalized == "job":
+        streak = db.get_streak(user_id, created_at)
+    else:
+        streak = db.refresh_streak(user_id, created_at)
+
     s_mult = streak_multiplier(streak.current_streak)
     if not economy_enabled or normalized == "job":
         final_xp = 0
@@ -153,31 +160,36 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
     tuning = db.get_economy_tuning()
     week = week_range_for(now)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
 
-    today_productive = db.sum_minutes(user_id, "productive", start=day_start, end=now)
-    today_spent = db.sum_minutes(user_id, "spend", start=day_start, end=now)
+    today_productive = db.sum_minutes(user_id, "productive", start=day_start, end=day_end)
+    today_spent = db.sum_minutes(user_id, "spend", start=day_start, end=day_end)
 
-    week_productive = db.sum_minutes(user_id, "productive", start=week.start, end=now)
-    week_spent = db.sum_minutes(user_id, "spend", start=week.start, end=now)
+    week_productive = db.sum_minutes(user_id, "productive", start=week.start, end=week.end)
+    week_spent = db.sum_minutes(user_id, "spend", start=week.start, end=week.end)
 
     all_productive = db.sum_minutes(user_id, "productive")
     all_spent = db.sum_minutes(user_id, "spend")
 
-    week_categories = db.sum_productive_by_category(user_id, start=week.start, end=now)
+    week_categories = db.sum_productive_by_category(user_id, start=week.start, end=week.end)
     all_categories = db.sum_productive_by_category(user_id)
 
     xp_total = db.sum_xp(user_id)
-    xp_week = db.sum_xp(user_id, start=week.start, end=now)
+    xp_week = db.sum_xp(user_id, start=week.start, end=week.end)
     lp = level_progress(xp_total, tuning=tuning)
 
     streak = db.get_streak(user_id, now)
     streak_mult = streak_multiplier(streak.current_streak)
     plan = db.get_plan_target(user_id, week.start.date())
     plan_target = int(plan.total_target_minutes) if plan else 0
-    plan_done = int(week_productive)
+    # Exclude job minutes from plan progress
+    week_job_minutes = week_categories.get("job", 0)
+    plan_done = max(0, int(week_productive) - week_job_minutes)
     plan_remaining = max(plan_target - plan_done, 0)
 
     base_fun = db.sum_fun_earned_entries(user_id)
+    # Fun earned this week
+    fun_earned_this_week = db.sum_fun_earned_entries(user_id, start=week.start, end=week.end)
     level_bonus = db.sum_level_bonus(user_id)
     quest_bonus = db.sum_completed_quest_rewards(user_id)
     wheel_bonus = db.sum_wheel_bonus(user_id)
@@ -213,10 +225,11 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         streak_current=streak.current_streak,
         streak_longest=streak.longest_streak,
         streak_multiplier=streak_mult,
-        deep_sessions_week=db.count_deep_sessions(user_id, week.start, now),
+        deep_sessions_week=db.count_deep_sessions(user_id, week.start, week.end),
         active_quests=len(db.list_active_quests(user_id, now)),
         week_plan_done_minutes=plan_done,
         week_plan_target_minutes=plan_target,
         week_plan_remaining_minutes=plan_remaining,
+        fun_earned_this_week=fun_earned_this_week,
         economy=economy,
     )

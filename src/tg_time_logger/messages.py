@@ -92,6 +92,12 @@ def status_message(view: StatusView, username: str | None = None, lang: str = "e
                 total=format_minutes_hm(view.week.productive_minutes),
                 xp=view.xp_week,
             ),
+            localize(
+                 lang,
+                 "  💰 Fun earned: +{fun}m",
+                 "  💰 Зароблено відпочинку: +{fun}хв",
+                 fun=view.fun_earned_this_week,
+            ),
             (
                 localize(
                     lang,

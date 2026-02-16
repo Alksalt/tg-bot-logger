@@ -105,6 +105,12 @@ SKILL_DEFS: dict[str, SkillDef] = {
         directive_file="skills/coach.md",
         required_tool_tags=frozenset({"data", "stats", "history", "analytics", "insights"}),
     ),
+    "db_analyst": SkillDef(
+        name="db_analyst",
+        directive_file="skills/db_analyst.md",
+        # Tag "data" is enough to trigger DbQueryTool, but we want to be explicit.
+        required_tool_tags=frozenset({"data", "stats", "history"}),
+    ),
 }
 
 
@@ -129,6 +135,13 @@ _SKILL_RULES: list[tuple[re.Pattern[str], str]] = [
             re.IGNORECASE,
         ),
         "coach",
+    ),
+    (
+        re.compile(
+            r"\b(sql|query database|analyze db|schema|table structure|raw data|count records)\b",
+            re.IGNORECASE,
+        ),
+        "db_analyst",
     ),
 ]
 

@@ -15,6 +15,8 @@ _SUPPORTED_ACTIONS = (
     "quest_history",
     "economy_breakdown",
     "note_keyword_sum",
+    "sql_query",
+    "schema_info",
 )
 
 
@@ -301,12 +303,75 @@ def _format_economy_breakdown(ctx: ToolContext) -> ToolResult:
     )
 
 
+def _format_sql_query(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return ToolResult(ok=False, content="Missing query.", metadata={})
+
+    try:
+        # Check if query is safe (read-only)
+        # The execute_readonly_query method in BaseDatabase handles this check too, but good to be explicit.
+        if not query.lower().startswith(("select", "with", "values", "explain", "pragma")):
+             return ToolResult(ok=False, content="Only read-only queries (SELECT) are allowed.", metadata={})
+
+        rows = ctx.db.execute_readonly_query(query)
+        if not rows:
+            return ToolResult(ok=True, content="No results.", metadata={"count": 0})
+
+        # Limit rows for context safety
+        limit = 50
+        limited_rows = rows[:limit]
+
+        lines = [f"Result ({len(rows)} rows, showing first {len(limited_rows)}):"]
+        if limited_rows:
+            headers = list(limited_rows[0].keys())
+            # Simple Markdown table
+            lines.append("| " + " | ".join(headers) + " |")
+            lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+            for r in limited_rows:
+                vals = [str(r[k]).replace("\n", " ") for k in headers]
+                lines.append("| " + " | ".join(vals) + " |")
+        
+        if len(rows) > limit:
+             lines.append(f"... {len(rows) - limit} more rows truncated ...")
+
+        return ToolResult(ok=True, content="\n".join(lines), metadata={"count": len(rows)})
+
+    except Exception as e:
+        return ToolResult(ok=False, content=f"Query error: {e}", metadata={"error": str(e)})
+
+
+def _format_schema_info(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
+    try:
+        # Get list of tables
+        tables = ctx.db.execute_readonly_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        lines = ["Database Schema:"]
+        for t in tables:
+            name = t["name"]
+            lines.append(f"## Table: {name}")
+            # Get columns
+            try:
+                cols = ctx.db.execute_readonly_query(f"PRAGMA table_info({name})")
+                lines.append("| cid | name | type | notnull | dflt_value | pk |")
+                lines.append("|---|---|---|---|---|---|")
+                for c in cols:
+                     vals = [str(c[k]) for k in ["cid", "name", "type", "notnull", "dflt_value", "pk"]]
+                     lines.append("| " + " | ".join(vals) + " |")
+                lines.append("")
+            except Exception:
+                lines.append("(Could not fetch columns)")
+            
+        return ToolResult(ok=True, content="\n".join(lines), metadata={"tables": len(tables)})
+    except Exception as e:
+        return ToolResult(ok=False, content=f"Schema error: {e}", metadata={"error": str(e)})
+
+
 class DbQueryTool(Tool):
     name = "db_query"
     description = (
-        "Query user history/stats from tracker DB with structured actions. "
-        "Args: {\"action\": \"weekly_breakdown|category_trend|recent_entries|quest_history|economy_breakdown|note_keyword_sum\", ...}. "
-        "Use note_keyword_sum for note/description-based totals, e.g. anime/youtube."
+        "Query user history/stats from tracker DB with structured actions or SQL. "
+        "Args: {\"action\": \"weekly_breakdown|category_trend|recent_entries|quest_history|economy_breakdown|note_keyword_sum|sql_query|schema_info\", ...}. "
+        "For sql_query, provide {\"query\": \"SELECT ...\"}."
     )
     tags = ("data", "stats", "history")
 
@@ -324,6 +389,10 @@ class DbQueryTool(Tool):
             return _format_economy_breakdown(ctx)
         if action == "note_keyword_sum":
             return _format_note_keyword_sum(ctx, args)
+        if action == "sql_query":
+            return _format_sql_query(ctx, args)
+        if action == "schema_info":
+            return _format_schema_info(ctx, args)
         return ToolResult(
             ok=False,
             content=f"Unknown action '{action}'. Supported actions: {', '.join(_SUPPORTED_ACTIONS)}",
