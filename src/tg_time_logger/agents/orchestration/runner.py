@@ -234,6 +234,96 @@ def run_llm_agent(
     }
 
 
+def run_llm_text(
+    *,
+    db: Database,
+    settings: Settings,
+    user_id: int,
+    now: datetime,
+    prompt: str,
+    system_prompt: str | None = "Return strict JSON only when asked. No markdown.",
+    tier_override: str | None = None,
+    model_preference: str | None = None,
+    max_tokens: int = 480,
+) -> dict[str, Any]:
+    cfg = db.get_app_config()
+    if not db.is_feature_enabled("agent"):
+        return {
+            "ok": False,
+            "answer": "",
+            "model": "none",
+            "tier": tier_override or "unknown",
+            "status": "disabled",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "failures": ["agent runtime disabled"],
+        }
+
+    model_cfg = load_model_config(settings.agent_models_path)
+    requested_tier = tier_override or str(cfg.get("agent.default_tier", model_cfg.default_tier))
+
+    loop = AgentLoop(
+        model_config=model_cfg,
+        api_key=settings.openrouter_api_key,
+        registry=ToolRegistry(),
+        app_config=cfg,
+        api_keys={
+            "openai": settings.openai_api_key,
+            "google": settings.google_api_key,
+            "anthropic": settings.anthropic_api_key,
+        },
+    )
+
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt.strip()})
+    messages.append({"role": "user", "content": prompt})
+
+    llm, failures = loop._call_models(
+        messages,
+        requested_tier=requested_tier,
+        allow_tier_escalation=True,
+        max_tokens=max(64, min(int(max_tokens), 1400)),
+        model_preference=model_preference,
+    )
+
+    prompt_tokens = sum(loop._estimate_tokens(m.get("content", "")) for m in messages)
+    completion_tokens = loop._estimate_tokens(llm.text) if llm and llm.text else 0
+
+    status = "ok" if llm and llm.text.strip() else "model_unavailable"
+    answer = llm.text.strip() if llm and llm.text else ""
+    model_used = llm.model_id if llm else "none"
+
+    db.add_admin_audit(
+        actor=f"user:{user_id}",
+        action="agent.direct",
+        target="llm",
+        payload={
+            "status": status,
+            "model": model_used,
+            "tier": requested_tier,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "question_length": len(prompt),
+            "system_length": len(system_prompt or ""),
+            "max_tokens": max_tokens,
+            "failures": failures[:5],
+        },
+        created_at=now,
+    )
+
+    return {
+        "ok": status == "ok",
+        "answer": answer,
+        "model": model_used,
+        "tier": requested_tier,
+        "status": status,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "failures": failures,
+    }
+
+
 def run_search_tool(
     *,
     db: Database,

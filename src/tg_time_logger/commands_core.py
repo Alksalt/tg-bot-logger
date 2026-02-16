@@ -6,7 +6,7 @@ import random
 from datetime import timedelta
 
 from tg_time_logger.agents.execution.config import load_model_config
-from tg_time_logger.agents.orchestration.runner import run_llm_agent
+from tg_time_logger.agents.orchestration.runner import run_llm_agent, run_llm_text
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -657,13 +657,18 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         user_settings = db.get_settings(user_id)
-        result = run_llm_agent(
+        result = run_llm_text(
             db=db,
             settings=settings,
             user_id=user_id,
             now=now,
-            question=prompt,
+            prompt=prompt,
+            system_prompt=(
+                "You create productivity quests. "
+                "Output exactly one valid JSON object. No markdown, no prose."
+            ),
             tier_override=user_settings.preferred_tier,
+            max_tokens=520,
         )
         answer = str(result.get("answer", "")).strip()
         model_used = str(result.get("model", "unknown"))
@@ -681,13 +686,18 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 recent_quest_lines=[],
                 memory_lines=[],
             )
-            retry_result = run_llm_agent(
+            retry_result = run_llm_text(
                 db=db,
                 settings=settings,
                 user_id=user_id,
                 now=now,
-                question=compact_prompt,
+                prompt=compact_prompt,
+                system_prompt=(
+                    "Output exactly one valid JSON object for the quest schema. "
+                    "No markdown, no prose."
+                ),
                 tier_override=user_settings.preferred_tier,
+                max_tokens=520,
             )
             retry_answer = str(retry_result.get("answer", "")).strip()
             retry_payload = extract_quest_payload(retry_answer)
