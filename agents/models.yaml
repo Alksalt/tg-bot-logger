@@ -96,9 +96,6 @@ tiers:
       - id: "gemini-3-flash-preview"
         provider: "google"
         reasoning: true
-      - id: "gemini-2.5-flash-lite"
-        provider: "google"
-        reasoning: true
       - id: "google/gemini-3-flash-preview"
         provider: "openrouter"
         reasoning: true
