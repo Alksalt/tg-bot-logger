@@ -1,0 +1,69 @@
+{
+  "version": "notion-backup-scaffold-v1",
+  "generated_at": "2026-02-11T19:10:47.896904+01:00",
+  "user_id": 506461323,
+  "week": {
+    "start": "2026-02-09T00:00:00+01:00",
+    "end": "2026-02-16T00:00:00+01:00"
+  },
+  "status": {
+    "level": 1,
+    "title": "Novice",
+    "xp_total": 122,
+    "xp_week": 0,
+    "streak_current": 0,
+    "streak_longest": 0,
+    "productive_week_minutes": 0,
+    "spent_week_minutes": 0,
+    "fun_remaining_minutes": 40,
+    "plan_done_minutes": 0,
+    "plan_target_minutes": 0,
+    "active_quests": 0
+  },
+  "entries": [
+    {
+      "id": 5,
+      "kind": "productive",
+      "category": "build",
+      "minutes": 1,
+      "xp_earned": 1,
+      "fun_earned": 0,
+      "note": null,
+      "created_at": "2026-02-08T13:36:37.989338+01:00",
+      "source": "timer"
+    },
+    {
+      "id": 3,
+      "kind": "productive",
+      "category": "build",
+      "minutes": 60,
+      "xp_earned": 60,
+      "fun_earned": 20,
+      "note": null,
+      "created_at": "2026-02-08T13:35:06.615289+01:00",
+      "source": "button"
+    },
+    {
+      "id": 2,
+      "kind": "productive",
+      "category": "build",
+      "minutes": 60,
+      "xp_earned": 60,
+      "fun_earned": 20,
+      "note": null,
+      "created_at": "2026-02-08T13:34:59.605199+01:00",
+      "source": "button"
+    },
+    {
+      "id": 1,
+      "kind": "productive",
+      "category": "build",
+      "minutes": 1,
+      "xp_earned": 1,
+      "fun_earned": 0,
+      "note": null,
+      "created_at": "2026-02-08T13:34:45.615083+01:00",
+      "source": "timer"
+    }
+  ]
+}
