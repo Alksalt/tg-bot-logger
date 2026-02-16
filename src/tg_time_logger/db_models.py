@@ -78,12 +78,18 @@ class Quest:
     description: str
     quest_type: str
     difficulty: str
+    duration_days: int
     reward_fun_minutes: int
+    penalty_fun_minutes: int
     condition_json: str
     status: str
+    starts_at: datetime
     expires_at: datetime
     completed_at: datetime | None
+    failed_at: datetime | None
+    penalty_applied_at: datetime | None
     created_at: datetime
+    source: str
 
 
 @dataclass(frozen=True)

@@ -121,8 +121,16 @@ async def handle_unspend_callback(update: Update, context: ContextTypes.DEFAULT_
     # unspend:y:amount
     parse = data.split(":")
     if len(parse) < 3:
+        await query.message.edit_text(localize(lang, "Invalid request.", "Невірний запит."))
         return
-    amount = int(parse[2])
+    try:
+        amount = int(parse[2])
+    except (TypeError, ValueError):
+        await query.message.edit_text(localize(lang, "Invalid amount.", "Невірна кількість."))
+        return
+    if amount <= 0:
+        await query.message.edit_text(localize(lang, "Invalid amount.", "Невірна кількість."))
+        return
 
     db.add_entry(
         user_id=user_id,

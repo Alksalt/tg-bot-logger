@@ -28,7 +28,6 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "job.sunday_summary_enabled": True,
     "job.reminders_enabled": True,
     "job.midweek_enabled": True,
-    "job.check_quests_enabled": True,
     "job.notion_backup_enabled": True,
     "economy.fun_rate.study": 15,
     "economy.fun_rate.build": 20,
@@ -60,6 +59,5 @@ JOB_CONFIG_KEYS = {
     "sunday_summary": "job.sunday_summary_enabled",
     "reminders": "job.reminders_enabled",
     "midweek": "job.midweek_enabled",
-    "check_quests": "job.check_quests_enabled",
     "notion_backup": "job.notion_backup_enabled",
 }

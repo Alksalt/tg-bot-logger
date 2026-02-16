@@ -115,8 +115,8 @@ def test_skill_defs_have_required_fields():
 
 def test_quest_builder_requires_quest_tags():
     qb = SKILL_DEFS["quest_builder"]
-    assert "quest" in qb.required_tool_tags
-    assert "gamification" in qb.required_tool_tags
+    assert "data" in qb.required_tool_tags
+    assert "history" in qb.required_tool_tags
 
 
 def test_research_requires_search_tags():

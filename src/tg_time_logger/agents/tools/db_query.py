@@ -309,10 +309,9 @@ def _format_sql_query(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
         return ToolResult(ok=False, content="Missing query.", metadata={})
 
     try:
-        # Check if query is safe (read-only)
-        # The execute_readonly_query method in BaseDatabase handles this check too, but good to be explicit.
+        # BaseDatabase executes in SQLite read-only mode, but keep a clear UX guard here.
         if not query.lower().startswith(("select", "with", "values", "explain", "pragma")):
-             return ToolResult(ok=False, content="Only read-only queries (SELECT) are allowed.", metadata={})
+            return ToolResult(ok=False, content="Only read-only queries are allowed.", metadata={})
 
         rows = ctx.db.execute_readonly_query(query)
         if not rows:
@@ -351,12 +350,13 @@ def _format_schema_info(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
             lines.append(f"## Table: {name}")
             # Get columns
             try:
-                cols = ctx.db.execute_readonly_query(f"PRAGMA table_info({name})")
+                safe_name = str(name).replace('"', '""')
+                cols = ctx.db.execute_readonly_query(f'PRAGMA table_info("{safe_name}")')
                 lines.append("| cid | name | type | notnull | dflt_value | pk |")
                 lines.append("|---|---|---|---|---|---|")
                 for c in cols:
-                     vals = [str(c[k]) for k in ["cid", "name", "type", "notnull", "dflt_value", "pk"]]
-                     lines.append("| " + " | ".join(vals) + " |")
+                    vals = [str(c[k]) for k in ["cid", "name", "type", "notnull", "dflt_value", "pk"]]
+                    lines.append("| " + " | ".join(vals) + " |")
                 lines.append("")
             except Exception:
                 lines.append("(Could not fetch columns)")

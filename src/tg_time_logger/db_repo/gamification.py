@@ -211,7 +211,7 @@ class GamificationMixin:
                 """
                 SELECT * FROM quests
                 WHERE user_id = ?
-                  AND status IN ('completed', 'expired', 'failed')
+                  AND status IN ('completed', 'expired', 'failed', 'cancelled')
                   AND created_at >= ?
                   AND created_at < ?
                 ORDER BY created_at DESC
@@ -232,6 +232,20 @@ class GamificationMixin:
             ).fetchall()
         return {str(r["title"]) for r in rows}
 
+    def list_recent_quests(self: DbProtocol, user_id: int, limit: int = 30) -> list[Quest]:
+        capped = max(1, min(int(limit), 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM quests
+                WHERE user_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, capped),
+            ).fetchall()
+        return [_row_to_quest(r) for r in rows]
+
     def insert_quest(
         self: DbProtocol,
         user_id: int,
@@ -243,16 +257,27 @@ class GamificationMixin:
         condition: dict[str, Any],
         expires_at: datetime,
         created_at: datetime,
+        starts_at: datetime | None = None,
+        duration_days: int = 7,
+        penalty_fun_minutes: int | None = None,
+        source: str = "manual_llm",
+        status: str = "active",
     ) -> Quest:
         payload = json.dumps(condition)
+        start_dt = starts_at or created_at
+        reward = max(1, int(reward_fun_minutes))
+        penalty = reward if penalty_fun_minutes is None else max(0, int(penalty_fun_minutes))
+        duration = max(1, int(duration_days))
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 INSERT INTO quests(
                     user_id, title, description, quest_type, difficulty, reward_fun_minutes,
-                    condition_json, status, expires_at, created_at
+                    duration_days, penalty_fun_minutes, condition_json,
+                    status, starts_at, expires_at, completed_at, failed_at,
+                    penalty_applied_at, created_at, source
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
                 """,
                 (
                     user_id,
@@ -260,10 +285,15 @@ class GamificationMixin:
                     description,
                     quest_type,
                     difficulty,
-                    reward_fun_minutes,
+                    reward,
+                    duration,
+                    penalty,
                     payload,
+                    status,
+                    start_dt.isoformat(),
                     expires_at.isoformat(),
                     created_at.isoformat(),
+                    source,
                 ),
             )
             row = conn.execute("SELECT * FROM quests WHERE id = ?", (cur.lastrowid,)).fetchone()
@@ -271,11 +301,163 @@ class GamificationMixin:
         return _row_to_quest(row)
 
     def update_quest_status(self: DbProtocol, quest_id: int, status: str, at: datetime | None = None) -> None:
+        ts = at.isoformat() if at else None
+        with self._connect() as conn:
+            if status == "completed":
+                conn.execute(
+                    """
+                    UPDATE quests
+                    SET status = ?, completed_at = ?, failed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (status, ts, quest_id),
+                )
+                return
+            if status in {"failed", "expired"}:
+                conn.execute(
+                    """
+                    UPDATE quests
+                    SET status = ?, failed_at = ?, completed_at = NULL
+                    WHERE id = ?
+                    """,
+                    (status, ts, quest_id),
+                )
+                return
+            conn.execute("UPDATE quests SET status = ? WHERE id = ?", (status, quest_id))
+
+    def mark_quest_penalty_applied(self: DbProtocol, quest_id: int, at: datetime) -> None:
         with self._connect() as conn:
             conn.execute(
-                "UPDATE quests SET status = ?, completed_at = ? WHERE id = ?",
-                (status, at.isoformat() if at else None, quest_id),
+                "UPDATE quests SET penalty_applied_at = ? WHERE id = ?",
+                (at.isoformat(), quest_id),
             )
+
+    def list_quests_by_status(self: DbProtocol, user_id: int, status: str) -> list[Quest]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM quests
+                WHERE user_id = ? AND status = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (user_id, status),
+            ).fetchall()
+        return [_row_to_quest(r) for r in rows]
+
+    def delete_user_quests(self: DbProtocol, user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM quests WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount)
+
+    def create_quest_proposal(
+        self: DbProtocol,
+        *,
+        user_id: int,
+        payload: dict[str, Any],
+        created_at: datetime,
+        source: str = "llm",
+        model: str | None = None,
+        prompt_version: str | None = None,
+    ) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO quest_proposals(
+                    user_id, payload_json, status, source, model, prompt_version, created_at
+                )
+                VALUES (?, ?, 'pending', ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    json.dumps(payload),
+                    source,
+                    model,
+                    prompt_version,
+                    created_at.isoformat(),
+                ),
+            )
+        return int(cur.lastrowid)
+
+    def get_quest_proposal(self: DbProtocol, proposal_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, user_id, payload_json, status, source, model, prompt_version, created_at, responded_at
+                FROM quest_proposals
+                WHERE id = ?
+                """,
+                (proposal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(str(row["payload_json"]))
+            if not isinstance(payload, dict):
+                payload = {}
+        except json.JSONDecodeError:
+            payload = {}
+        return {
+            "id": int(row["id"]),
+            "user_id": int(row["user_id"]),
+            "payload": payload,
+            "status": str(row["status"]),
+            "source": str(row["source"] or "llm"),
+            "model": row["model"],
+            "prompt_version": row["prompt_version"],
+            "created_at": str(row["created_at"]),
+            "responded_at": str(row["responded_at"]) if row["responded_at"] else None,
+        }
+
+    def set_quest_proposal_status(self: DbProtocol, proposal_id: int, status: str, now: datetime) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE quest_proposals
+                SET status = ?, responded_at = ?
+                WHERE id = ?
+                """,
+                (status, now.isoformat(), proposal_id),
+            )
+        return cur.rowcount > 0
+
+    def clear_user_quest_proposals(self: DbProtocol, user_id: int) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM quest_proposals WHERE user_id = ?", (user_id,))
+        return int(cur.rowcount)
+
+    def list_recent_quest_payloads(self: DbProtocol, user_id: int, limit: int = 30) -> list[dict[str, Any]]:
+        capped = max(1, min(int(limit), 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload_json, status, source, model, prompt_version, created_at, responded_at
+                FROM quest_proposals
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, capped),
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                if not isinstance(payload, dict):
+                    payload = {}
+            except json.JSONDecodeError:
+                payload = {}
+            result.append(
+                {
+                    "payload": payload,
+                    "status": str(row["status"]),
+                    "source": str(row["source"] or "llm"),
+                    "model": row["model"],
+                    "prompt_version": row["prompt_version"],
+                    "created_at": str(row["created_at"]),
+                    "responded_at": str(row["responded_at"]) if row["responded_at"] else None,
+                }
+            )
+        return result
 
     def has_wheel_spin(self: DbProtocol, user_id: int, week_start: date) -> bool:
         with self._connect() as conn:

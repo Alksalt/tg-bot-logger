@@ -4,6 +4,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from tg_time_logger.gamification import level_from_xp, level_up_bonus_minutes
 
@@ -19,35 +20,29 @@ class BaseDatabase:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _connect_readonly(self) -> sqlite3.Connection:
+        # URI mode enforces read-only semantics at SQLite level.
+        uri_path = quote(str(self.path))
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def execute_readonly_query(self, sql: str, params: tuple | None = None) -> list[dict[str, Any]]:
         """
         Execute a read-only SQL query and return rows as dicts.
-        Restricts usage to SELECT statements only.
+        Restricts usage to read-only SQL entrypoints and enforces read-only DB mode.
         """
         normalized = sql.strip().lower()
-        if not normalized.startswith("select") and not normalized.startswith("with"):
-             # "WITH" Common Table Expressions (CTEs) also start read-only queries usually,
-             # but to be safe we might restrict to SELECT/WITH.
-             # Simple heuristic: must start with SELECT or WITH.
-             # Also check for strictly no usage of INSERT/UPDATE/DELETE/DROP/ALTER/PRAGMA/VACUUM?
-             # SQLite permissions are per file, so we can't easily restrict the connection itself without
-             # using a separate read-only connection string (file:...&mode=ro).
-             # For now, simplistic check.
-             raise ValueError("Only SELECT queries are allowed.")
+        if not normalized:
+            raise ValueError("Empty SQL query.")
+        first_token = normalized.split(maxsplit=1)[0]
+        if first_token not in {"select", "with", "pragma", "explain", "values"}:
+            raise ValueError("Only read-only SQL statements are allowed.")
 
-        # Ensure we are not tricking the check (e.g. "SELECT 1; DROP TABLE entries;")
-        # simplest way is to fetchall.
-        with self._connect() as conn:
-            # Enforce read-only mode processing if possible, but python sqlite3 doesn't easily support mode=ro uri unless enabled
-            # We can use os.path uri.
-            # Let's rely on simple string check + catch errors.
-            try:
-                cursor = conn.execute(sql, params or ())
-                rows = cursor.fetchall()
-                return [dict(row) for row in rows]
-            except sqlite3.Error as e:
-                # If it was a multi-statement that failed or something
-                raise e
+        with self._connect_readonly() as conn:
+            cursor = conn.execute(sql, params or ())
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
 
     def _init_db(self) -> None:
@@ -397,6 +392,40 @@ class BaseDatabase:
                     );
                     CREATE INDEX IF NOT EXISTS idx_todo_items_user_date
                     ON todo_items(user_id, plan_date);
+                """,
+                21: """
+                    ALTER TABLE quests ADD COLUMN duration_days INTEGER NOT NULL DEFAULT 7;
+                    ALTER TABLE quests ADD COLUMN starts_at TEXT;
+                    UPDATE quests
+                    SET starts_at = created_at
+                    WHERE starts_at IS NULL;
+
+                    ALTER TABLE quests ADD COLUMN penalty_fun_minutes INTEGER NOT NULL DEFAULT 0;
+                    UPDATE quests
+                    SET penalty_fun_minutes = reward_fun_minutes
+                    WHERE penalty_fun_minutes <= 0;
+
+                    ALTER TABLE quests ADD COLUMN failed_at TEXT;
+                    ALTER TABLE quests ADD COLUMN penalty_applied_at TEXT;
+                    ALTER TABLE quests ADD COLUMN source TEXT NOT NULL DEFAULT 'legacy_auto';
+
+                    CREATE INDEX IF NOT EXISTS idx_quests_user_status_expires
+                    ON quests(user_id, status, expires_at);
+                """,
+                22: """
+                    CREATE TABLE IF NOT EXISTS quest_proposals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        payload_json TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        source TEXT NOT NULL DEFAULT 'llm',
+                        model TEXT,
+                        prompt_version TEXT,
+                        created_at TEXT NOT NULL,
+                        responded_at TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_quest_proposals_user_status_created
+                    ON quest_proposals(user_id, status, created_at DESC);
                 """,
             }
 

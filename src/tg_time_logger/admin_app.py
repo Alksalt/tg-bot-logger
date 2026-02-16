@@ -8,7 +8,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from tg_time_logger.config import load_settings
-from tg_time_logger.db import APP_CONFIG_DEFAULTS, Database
+from tg_time_logger.db import Database
+from tg_time_logger.db_constants import APP_CONFIG_DEFAULTS
 from tg_time_logger.logging_setup import setup_logging
 
 
@@ -139,7 +140,7 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     ];
     const jobKeys = [
       "job.sunday_summary_enabled", "job.reminders_enabled",
-      "job.midweek_enabled", "job.check_quests_enabled", "job.notion_backup_enabled"
+      "job.midweek_enabled", "job.notion_backup_enabled"
     ];
     const economyKeys = [
       "economy.fun_rate.study", "economy.fun_rate.build", "economy.fun_rate.training", "economy.fun_rate.job",

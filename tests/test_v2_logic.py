@@ -153,17 +153,13 @@ def test_migration_productive_to_build_category(tmp_path) -> None:
     assert row["category"] == "build"
 
 
-def test_weekly_quest_generation_has_three_difficulties(tmp_path) -> None:
+def test_weekly_quest_generation_is_disabled_in_v2(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     now = _dt(2026, 2, 9)  # Monday
     ensure_weekly_quests(db, user_id=1, now=now, llm_enabled=False, llm_route=None)
 
     active = db.list_active_quests(1, now)
-    difficulties = {q.difficulty for q in active}
-
-    assert "easy" in difficulties
-    assert "medium" in difficulties
-    assert "hard" in difficulties
+    assert active == []
 
 
 def test_llm_usage_tracking(tmp_path) -> None:

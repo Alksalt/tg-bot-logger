@@ -13,7 +13,7 @@ from tg_time_logger.gamification import format_minutes_hm, spin_wheel
 from tg_time_logger.llm_messages import LlmContext, weekly_summary_message
 from tg_time_logger.llm_router import LlmRoute
 from tg_time_logger.notion_backup import run_notion_backup_job
-from tg_time_logger.quests import check_quests_for_user, ensure_weekly_quests, evaluate_quest_progress
+from tg_time_logger.quests import evaluate_quest_progress, sync_quests_for_user
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for, week_start_date
 
@@ -57,6 +57,7 @@ async def run_sunday_summary(db: Database, settings: Settings) -> None:
     for profile in db.get_all_user_profiles():
         user_id = int(profile["user_id"])
         chat_id = int(profile["chat_id"])
+        sync_quests_for_user(db, user_id, now)
         view = compute_status(db, user_id, now)
 
         plan = db.get_plan_target(user_id, week.start.date())
@@ -139,6 +140,7 @@ async def run_reminders(db: Database, settings: Settings) -> None:
     for profile in db.get_all_user_profiles():
         user_id = int(profile["user_id"])
         chat_id = int(profile["chat_id"])
+        sync_quests_for_user(db, user_id, now)
         reminders_enabled = bool(profile.get("reminders_enabled", 1))
         daily_goal = int(profile.get("daily_goal_minutes") or 60)
         quiet_hours = profile.get("quiet_hours")
@@ -280,42 +282,6 @@ async def run_midweek(db: Database, settings: Settings) -> None:
         logger.info("sent midweek message user_id=%s", user_id)
 
 
-async def run_check_quests(db: Database, settings: Settings) -> None:
-    if not db.is_job_enabled("check_quests"):
-        logger.info("job disabled: check_quests")
-        return
-    if not db.is_feature_enabled("quests"):
-        logger.info("feature disabled: quests")
-        return
-    now = now_local(settings.tz)
-    bot = Bot(token=settings.telegram_bot_token)
-
-    for profile in db.get_all_user_profiles():
-        user_id = int(profile["user_id"])
-        chat_id = int(profile["chat_id"])
-
-        ensure_weekly_quests(
-            db,
-            user_id,
-            now,
-            llm_enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
-            llm_route=LlmRoute(
-                provider=settings.llm_provider,
-                model=settings.llm_model,
-                api_key=settings.llm_api_key,
-            ),
-        )
-        completed = check_quests_for_user(db, user_id, now)
-        for item in completed:
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"✅ Quest completed: {item.quest.title}\n"
-                    f"Reward: +{item.quest.reward_fun_minutes} fun minutes"
-                ),
-            )
-
-
 def run_notion_backup(db: Database, settings: Settings) -> None:
     if not db.is_job_enabled("notion_backup"):
         logger.info("job disabled: notion_backup")
@@ -338,12 +304,10 @@ def run_job(job_name: str, db: Database, settings: Settings) -> None:
         asyncio.run(run_reminders(db, settings))
     elif job_name == "midweek":
         asyncio.run(run_midweek(db, settings))
-    elif job_name == "check_quests":
-        asyncio.run(run_check_quests(db, settings))
     elif job_name == "notion_backup":
         run_notion_backup(db, settings)
     else:
         raise SystemExit(
             "Unknown job "
-            f"'{job_name}'. Expected one of: sunday_summary, reminders, midweek, check_quests, notion_backup"
+            f"'{job_name}'. Expected one of: sunday_summary, reminders, midweek, notion_backup"
         )

@@ -85,6 +85,21 @@ def _row_to_streak(row: sqlite3.Row) -> Streak:
 
 
 def _row_to_quest(row: sqlite3.Row) -> Quest:
+    starts_raw = row["starts_at"] if "starts_at" in row.keys() and row["starts_at"] else row["created_at"]
+    duration_days = int(row["duration_days"]) if "duration_days" in row.keys() and row["duration_days"] is not None else 7
+    penalty = (
+        int(row["penalty_fun_minutes"])
+        if "penalty_fun_minutes" in row.keys() and row["penalty_fun_minutes"] is not None
+        else int(row["reward_fun_minutes"])
+    )
+    failed_at = datetime.fromisoformat(row["failed_at"]) if "failed_at" in row.keys() and row["failed_at"] else None
+    penalty_applied_at = (
+        datetime.fromisoformat(row["penalty_applied_at"])
+        if "penalty_applied_at" in row.keys() and row["penalty_applied_at"]
+        else None
+    )
+    source = str(row["source"]) if "source" in row.keys() and row["source"] else "legacy_auto"
+
     return Quest(
         id=row["id"],
         user_id=row["user_id"],
@@ -92,12 +107,18 @@ def _row_to_quest(row: sqlite3.Row) -> Quest:
         description=row["description"],
         quest_type=row["quest_type"],
         difficulty=row["difficulty"],
+        duration_days=duration_days,
         reward_fun_minutes=row["reward_fun_minutes"],
+        penalty_fun_minutes=penalty,
         condition_json=row["condition_json"],
         status=row["status"],
+        starts_at=datetime.fromisoformat(starts_raw),
         expires_at=datetime.fromisoformat(row["expires_at"]),
         completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+        failed_at=failed_at,
+        penalty_applied_at=penalty_applied_at,
         created_at=datetime.fromisoformat(row["created_at"]),
+        source=source,
     )
 
 

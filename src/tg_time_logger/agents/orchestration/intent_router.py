@@ -93,7 +93,7 @@ SKILL_DEFS: dict[str, SkillDef] = {
     "quest_builder": SkillDef(
         name="quest_builder",
         directive_file="skills/quest_builder.md",
-        required_tool_tags=frozenset({"data", "stats", "history", "quest", "gamification"}),
+        required_tool_tags=frozenset({"data", "stats", "history", "analytics", "insights"}),
     ),
     "research": SkillDef(
         name="research",

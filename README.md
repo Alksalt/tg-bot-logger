@@ -77,7 +77,6 @@ Open:
 uv run python jobs.py sunday_summary
 uv run python jobs.py reminders
 uv run python jobs.py midweek
-uv run python jobs.py check_quests
 uv run python jobs.py notion_backup
 ```
 
@@ -95,6 +94,8 @@ Core:
 - `/rules remove <id>`
 - `/rules clear`
 - `/llm <question>`
+- `/llm quest <easy|medium|hard> [3|5|7|14|21]`
+- `/llm quests [3|5|7|14|21]` (random difficulty)
 - `/llm tier <free|open_source_cheap|top_tier> <question>`
 - `/llm models`
 - `/search <query>`
@@ -119,6 +120,7 @@ Plan/reminders:
 Quests/shop/savings:
 - `/quests`
 - `/quests history`
+- `/quests reset`
 - `/shop`
 - `/shop add <emoji> "name" <cost_minutes_or_duration> [nok_value]`
 - `/shop add <emoji> "name" <nok_value>nok`
@@ -179,14 +181,19 @@ Migrations run automatically when `Database(...)` initializes (bot or jobs). Exi
 - `agents/tools/` tool implementations/registry.
 - `TOOLS.md` tool manifest.
 
-## Quest Generation
+## Quest Generation (Quests 2.0)
 
-- Every week the system creates exactly:
-  - 1 easy quest
-  - 1 medium quest
-  - 1 hard quest
-- Quest is selected randomly from curated pools (10 per difficulty), with anti-repeat preference.
-- If LLM is enabled, one additional bonus quest can be generated from previous-week stats and then validated before insertion.
+- No auto-generated quests from scheduled jobs.
+- Manual generation via LLM:
+  - `/llm quest easy|medium|hard [3|5|7|14|21]`
+  - `/llm quests [3|5|7|14|21]` for random difficulty
+- Bot shows a proposal with **Accept / Decline** buttons before creating a quest.
+- Difficulty/reward baseline (7-day):
+  - easy: min 300m, reward 30-45m
+  - medium: min 720m, reward 60-90m
+  - hard: min 1200m, reward 120-180m
+- Reward/penalty mirror rule: penalty equals reward.
+- Build-first strategy: quests should prioritize build (around 60-70% focus), with study/training as supporting tracks.
 
 ## Test
 
