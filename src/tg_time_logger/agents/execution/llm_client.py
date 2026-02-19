@@ -53,6 +53,7 @@ def call_openrouter(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        "response_format": {"type": "json_object"},
     }
     if reasoning_enabled and model.reasoning:
         payload["reasoning"] = {"enabled": True}
@@ -90,6 +91,7 @@ def call_openai(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        "response_format": {"type": "json_object"},
     }
     try:
         with httpx.Client(timeout=timeout_seconds) as client:
@@ -123,6 +125,7 @@ def call_google(
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        "response_format": {"type": "json_object"},
     }
     try:
         with httpx.Client(timeout=timeout_seconds) as client:

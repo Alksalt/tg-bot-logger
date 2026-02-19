@@ -241,8 +241,8 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if nok_guess is None:
             await pending.edit_text(
                 (
-                    f"{localize(lang, 'Could not detect a NOK price from results ({meta}).', 'Не вдалося визначити ціну в NOK з результатів ({meta}).', meta=meta)}\n"
-                    f"{localize(lang, 'Use manual add: /shop add <emoji> \"name\" <minutes> [nok]', 'Використай ручне додавання: /shop add <emoji> \"name\" <minutes> [nok]')}\n\n"
+                    localize(lang, 'Could not detect a NOK price from results ({meta}).', 'Не вдалося визначити ціну в NOK з результатів ({meta}).', meta=meta) + "\n" +
+                    localize(lang, 'Use manual add: /shop add <emoji> "name" <minutes> [nok]', 'Використай ручне додавання: /shop add <emoji> "name" <minutes> [nok]') + "\n\n" +
                     f"Top results:\n{content[:2500]}"
                 )
             )
@@ -275,11 +275,11 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             await pending.edit_text(
                 (
-                    f"{localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta)}\n"
-                    f"{localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok)}\n"
-                    f"{localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio)}\n"
-                    f"{localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes)}\n\n"
-                    f"{localize(lang, 'Top results:', 'Топ результатів:')}\n{content[:1800]}"
+                    localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta) + "\n" +
+                    localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok) + "\n" +
+                    localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio) + "\n" +
+                    localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes) + "\n\n" +
+                    localize(lang, 'Top results:', 'Топ результатів:') + f"\n{content[:1800]}"
                 ),
                 reply_markup=kb,
             )
@@ -288,13 +288,13 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         suggested_cmd = f'/shop add {emoji} "{name}" {cost_minutes}m {suggested_nok}'
         await pending.edit_text(
             (
-                f"{localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta)}\n"
-                f"{localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok)}\n"
-                f"{localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio)}\n"
-                f"{localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes)}\n\n"
-                f"{localize(lang, 'Suggested command:', 'Рекомендована команда:')}\n"
-                f"{suggested_cmd}\n\n"
-                f"{localize(lang, 'Top results:', 'Топ результатів:')}\n{content[:2200]}"
+                localize(lang, 'Price scout ({meta})', 'Скан цін ({meta})', meta=meta) + "\n" +
+                localize(lang, 'Detected price: ~{nok} NOK', 'Виявлена ціна: ~{nok} NOK', nok=suggested_nok) + "\n" +
+                localize(lang, 'Rate: 1 NOK = {ratio} fun min', 'Курс: 1 NOK = {ratio} fun хв', ratio=ratio) + "\n" +
+                localize(lang, 'Suggested cost: {cost}m', 'Рекомендована ціна: {cost}хв', cost=cost_minutes) + "\n\n" +
+                localize(lang, 'Suggested command:', 'Рекомендована команда:') + "\n" +
+                f"{suggested_cmd}\n\n" +
+                localize(lang, 'Top results:', 'Топ результатів:') + f"\n{content[:2200]}"
             )
         )
         return

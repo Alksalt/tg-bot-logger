@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from tg_time_logger.agents.tools.base import Tool, ToolContext, ToolResult
@@ -9,7 +9,6 @@ from tg_time_logger.agents.tools.insights import InsightsTool
 from tg_time_logger.agents.tools.memory import MemoryManageTool
 from tg_time_logger.agents.tools.notion_mcp import NotionMcpTool
 from tg_time_logger.agents.tools.quest_propose import QuestProposeTool
-from tg_time_logger.agents.tools.search import WebSearchTool
 from tg_time_logger.agents.tools.todo import TodoManageTool
 
 
@@ -70,7 +69,6 @@ class ToolRegistry:
 
 def build_default_registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register(WebSearchTool())
     reg.register(DbQueryTool())
     reg.register(InsightsTool())
     reg.register(QuestProposeTool())

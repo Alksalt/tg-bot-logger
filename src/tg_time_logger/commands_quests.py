@@ -69,8 +69,10 @@ async def cmd_quests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     lines = [localize(lang, "⚔️ Active quests:", "⚔️ Активні квести:")]
     for q in active:
         p = evaluate_quest_progress(db, user_id, q, now)
+        start_str = q.starts_at.strftime('%Y-%m-%d')
+        end_str = q.expires_at.strftime('%Y-%m-%d')
         lines.append(
-            f"- {q.title} ({q.difficulty}, {q.duration_days}d): "
+            f"- {q.title} ({q.difficulty}, {start_str} to {end_str}): "
             f"{p.current}/{p.target} {p.unit} | +{q.reward_fun_minutes}m / -{q.penalty_fun_minutes}m"
         )
     await update.effective_message.reply_text("\n".join(lines))

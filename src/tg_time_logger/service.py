@@ -13,7 +13,6 @@ from tg_time_logger.gamification import (
     fun_from_minutes,
     level_from_xp,
     level_progress,
-    level_progress,
     streak_multiplier,
 )
 from datetime import timedelta

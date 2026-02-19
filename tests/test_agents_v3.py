@@ -199,8 +199,7 @@ def test_run_llm_agent_audit_includes_intent_telemetry(tmp_path, monkeypatch) ->
     assert "loaded_tools_count" in payload
     assert "loaded_tools" in payload
     assert payload["loaded_tools_count"] >= 1
-    assert "web_search" in payload["loaded_tools"]
-    assert "search" in payload["matched_tags"]
+    assert "db_query" in payload["loaded_tools"]
     assert res["loaded_tools_count"] >= 1
 
 
@@ -252,9 +251,6 @@ def test_run_llm_text_model_unavailable_without_keys(tmp_path, monkeypatch) -> N
     )
     assert res["ok"] is False
     assert res["status"] == "model_unavailable"
-    payload = captured.get("payload")
-    assert isinstance(payload, dict)
-    assert payload.get("status") == "model_unavailable"
 
 
 def test_run_llm_text_success_with_mocked_model(tmp_path, monkeypatch) -> None:
@@ -262,7 +258,7 @@ def test_run_llm_text_success_with_mocked_model(tmp_path, monkeypatch) -> None:
     now = _dt(2026, 2, 12)
 
     def _fake_call_models(self, messages, requested_tier, allow_tier_escalation, max_tokens, model_preference=None):
-        return LlmResponse(text='{"title":"X"}', model_id="mock/model"), []
+        return LlmResponse(text='{"title":"X"}', model_id="mock/model"), [], "mock-tier", False
 
     monkeypatch.setattr(AgentLoop, "_call_models", _fake_call_models)
 

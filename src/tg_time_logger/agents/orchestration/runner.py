@@ -281,13 +281,26 @@ def run_llm_text(
         messages.append({"role": "system", "content": system_prompt.strip()})
     messages.append({"role": "user", "content": prompt})
 
-    llm, failures = loop._call_models(
+    llm, failures, tier_used, fallback_occurred = loop._call_models(
         messages,
         requested_tier=requested_tier,
         allow_tier_escalation=allow_tier_escalation,
         max_tokens=max(64, min(int(max_tokens), 1400)),
         model_preference=model_preference,
     )
+
+    if not llm:
+        return {
+            "ok": False,
+            "answer": "",
+            "model": "none",
+            "tier": tier_used,
+            "status": "model_unavailable",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "failures": failures,
+            "fallback_occurred": False,
+        }
 
     prompt_tokens = sum(loop._estimate_tokens(m.get("content", "")) for m in messages)
     completion_tokens = loop._estimate_tokens(llm.text) if llm and llm.text else 0
@@ -303,7 +316,7 @@ def run_llm_text(
         payload={
             "status": status,
             "model": model_used,
-            "tier": requested_tier,
+            "tier": tier_used, # Changed from requested_tier
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "question_length": len(prompt),

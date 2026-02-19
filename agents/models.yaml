@@ -5,32 +5,32 @@ tiers:
     models:
       - id: "arcee-ai/trinity-large-preview:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "stepfun/step-3.5-flash:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "tngtech/deepseek-r1t2-chimera:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "openrouter/pony-alpha"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "qwen/qwen3-coder:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
 
   open_source:
     description: "Open/open-weight and low-cost models for stronger reliability."
     models:
       - id: "deepseek/deepseek-v3.2"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "qwen/qwen3-coder-next"
         provider: "openrouter"
         reasoning: false
       - id: "z-ai/glm-4.7"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "minimax/minimax-m2.1"
         provider: "openrouter"
         reasoning: false
@@ -43,26 +43,26 @@ tiers:
     models:
       - id: "moonshotai/kimi-k2.5"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "z-ai/glm-4.7-flash"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "deepseek/deepseek-v3.2"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
 
   deepseek:
     description: "DeepSeek-first tier."
     models:
       - id: "deepseek/deepseek-v3.2"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "deepseek/deepseek-r1"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "tngtech/deepseek-r1t2-chimera:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
 
   qwen:
     description: "Qwen-first coding and reasoning tier."
@@ -72,10 +72,10 @@ tiers:
         reasoning: false
       - id: "qwen/qwen3-235b-a22b"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "qwen/qwen3-coder:free"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
 
   gpt:
     description: "OpenAI GPT tier with OpenRouter fallback."
@@ -95,10 +95,10 @@ tiers:
     models:
       - id: "gemini-3-flash-preview"
         provider: "google"
-        reasoning: true
+        reasoning: false
       - id: "google/gemini-3-flash-preview"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
 
   claude:
     description: "Anthropic Claude tier with OpenRouter fallback."
@@ -121,7 +121,7 @@ tiers:
         reasoning: false
       - id: "gemini-3-flash-preview"
         provider: "google"
-        reasoning: true
+        reasoning: false
       - id: "claude-haiku-4-5-20251001"
         provider: "anthropic"
         reasoning: false
@@ -130,10 +130,10 @@ tiers:
         reasoning: false
       - id: "google/gemini-3-flash-preview"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false
       - id: "anthropic/claude-haiku-4.5"
         provider: "openrouter"
         reasoning: false
       - id: "moonshotai/kimi-k2.5"
         provider: "openrouter"
-        reasoning: true
+        reasoning: false

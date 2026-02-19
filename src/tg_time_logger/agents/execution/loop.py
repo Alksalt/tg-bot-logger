@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from tg_time_logger.agents.execution.config import ModelConfig, get_int, get_tier_order
+from tg_time_logger.agents.execution.config import ModelConfig, ModelSpec, get_int, get_tier_order
 from tg_time_logger.agents.execution.llm_client import (
     LlmResponse,
     call_anthropic,
@@ -41,6 +41,8 @@ class AgentRunResult:
     prompt_tokens: int
     completion_tokens: int
     status: str
+    tier_used: str = "unknown"
+    fallback_occurred: bool = False
 
 
 class AgentLoop:
@@ -75,21 +77,39 @@ class AgentLoop:
             return None, "Invalid answer action: missing non-empty 'answer' string."
 
         if action == "tool":
-            tool = str(payload.get("tool", "")).strip()
-            args = payload.get("args", {})
-            if not tool:
-                return None, "Invalid tool action: missing 'tool' name."
-            if self.registry.get(tool) is None:
-                return None, f"Invalid tool action: unknown tool '{tool}'."
-            if not isinstance(args, dict):
-                return None, "Invalid tool action: 'args' must be an object."
-            sanitized_args: dict[str, Any] = {}
-            for key, value in args.items():
-                if not isinstance(key, str):
+            tools = payload.get("tools")
+            if not isinstance(tools, list):
+                # Backwards compat for old 1-tool schema
+                t_name = str(payload.get("tool", "")).strip()
+                t_args = payload.get("args", {})
+                if not t_name:
+                    return None, "Invalid tool action: missing 'tools' array or 'tool' name."
+                tools = [{"name": t_name, "args": t_args}]
+            
+            validated_tools = []
+            for item in tools:
+                if not isinstance(item, dict):
                     continue
-                if self._is_json_primitive(value):
-                    sanitized_args[key] = value
-            return "tool", {"tool": tool, "args": sanitized_args}
+                t_name = str(item.get("name", item.get("tool", ""))).strip()
+                if not t_name:
+                    continue
+                if self.registry.get(t_name) is None:
+                    return None, f"Invalid tool action: unknown tool '{t_name}'."
+                t_args = item.get("args", {})
+                if not isinstance(t_args, dict):
+                    return None, "Invalid tool action: 'args' must be an object."
+                
+                sanitized_args: dict[str, Any] = {}
+                for key, value in t_args.items():
+                    if not isinstance(key, str):
+                        continue
+                    if self._is_json_primitive(value):
+                        sanitized_args[key] = value
+                validated_tools.append({"name": t_name, "args": sanitized_args})
+            
+            if not validated_tools:
+                return None, "Invalid tool action: empty tools array."
+            return "tool", {"tools": validated_tools}
 
         return None, f"Invalid action '{action}'. Expected 'answer' or 'tool'."
 
@@ -139,12 +159,12 @@ class AgentLoop:
         allow_tier_escalation: bool,
         max_tokens: int,
         model_preference: str | None = None,
-    ) -> tuple[LlmResponse | None, list[str]]:
-        """Returns (response, failure_reasons). failure_reasons empty on success."""
+    ) -> tuple[LlmResponse | None, list[str], str, bool]:
+        """Returns (response, failure_reasons, tier_used, fallback_occurred). failure_reasons empty on success."""
         reasoning_enabled = bool(self.app_config.get("agent.reasoning_enabled", True))
         tier_order = get_tier_order(self.model_config, requested_tier, allow_tier_escalation)
         failures: list[str] = []
-        for tier_name in tier_order:
+        for tier_idx, tier_name in enumerate(tier_order):
             tier = self.model_config.get_tier(tier_name)
             if not tier:
                 continue
@@ -153,10 +173,11 @@ class AgentLoop:
                     continue
                 res, reason = self._call_single_model(model, messages, max_tokens, reasoning_enabled)
                 if res:
-                    return res, []
+                    fallback_occurred = (tier_idx > 0)
+                    return res, failures, tier_name, fallback_occurred
                 if reason:
                     failures.append(reason)
-        return None, failures
+        return None, failures, "none", False
 
     def run(self, req: AgentRequest, ctx: ToolContext) -> AgentRunResult:
         max_steps = get_int(self.app_config, "agent.max_steps", default=6, min_value=1)
@@ -179,7 +200,7 @@ class AgentLoop:
                 "You are in an agent loop. Return JSON only with one schema:\n"
                 "{\"action\":\"answer\",\"answer\":\"...\"}\n"
                 "or\n"
-                "{\"action\":\"tool\",\"tool\":\"tool_name\",\"args\":{...},\"reason\":\"...\"}\n\n"
+                "{\"action\":\"tool\",\"tools\":[{\"name\":\"tool_name\",\"args\":{...}}, ...],\"reason\":\"...\"}\n\n"
                 "Tool list:\n"
                 f"{tools_json}\n\n"
                 f"User question:\n{req.question}\n\n"
@@ -229,7 +250,7 @@ class AgentLoop:
                 )
 
             output_budget = min(max_step_output_tokens, remaining_total)
-            llm, call_failures = self._call_models(
+            llm, call_failures, tier_used, fallback_occurred = self._call_models(
                 messages,
                 req.requested_tier,
                 req.allow_tier_escalation,
@@ -275,33 +296,38 @@ class AgentLoop:
                     prompt_tokens=total_prompt_tokens,
                     completion_tokens=total_completion_tokens,
                     status="ok",
+                    tier_used=tier_used,
+                    fallback_occurred=fallback_occurred,
                 )
 
             if action == "tool":
-                if tool_calls >= max_tool_calls:
-                    observations.append("Tool call budget exhausted.")
-                    continue
-                tool_name = str(payload["tool"])
-                args = dict(payload["args"])
-                signature = f"{tool_name}:{args}"
-                if signature in used_signatures:
-                    observations.append(f"Skipping duplicate tool call: {tool_name}.")
-                    continue
-                used_signatures.add(signature)
-                result = self.registry.run(tool_name, args, ctx)
-                tool_calls += 1
-                steps.append(
-                    {
-                        "type": "tool",
-                        "model": llm.model_id,
-                        "tool": tool_name,
-                        "ok": result.ok,
-                        "metadata": result.metadata,
-                    }
-                )
-                observations.append(
-                    f"Tool {tool_name} ({'ok' if result.ok else 'fail'}): {result.content[:1200]}"
-                )
+                for t_item in payload.get("tools", []):
+                    if tool_calls >= max_tool_calls:
+                        observations.append("Tool call budget exhausted.")
+                        break
+                    
+                    tool_name = str(t_item["name"])
+                    args = dict(t_item["args"])
+                    signature = f"{tool_name}:{args}"
+                    if signature in used_signatures:
+                        observations.append(f"Skipping duplicate tool call: {tool_name}.")
+                        continue
+                    
+                    used_signatures.add(signature)
+                    result = self.registry.run(tool_name, args, ctx)
+                    tool_calls += 1
+                    steps.append(
+                        {
+                            "type": "tool",
+                            "model": llm.model_id,
+                            "tool": tool_name,
+                            "ok": result.ok,
+                            "metadata": result.metadata,
+                        }
+                    )
+                    observations.append(
+                        f"Tool {tool_name} ({'ok' if result.ok else 'fail'}): {result.content[:1200]}"
+                    )
                 continue
 
             observations.append(f"Unknown action '{action}'.")
@@ -338,7 +364,7 @@ class AgentLoop:
                 completion_tokens=total_completion_tokens,
                 status="budget_blocked",
             )
-        final, _ = self._call_models(
+        final, _, tier_used, fallback_occurred = self._call_models(
             fallback_messages,
             req.requested_tier,
             req.allow_tier_escalation,
@@ -355,6 +381,8 @@ class AgentLoop:
                 prompt_tokens=total_prompt_tokens,
                 completion_tokens=total_completion_tokens,
                 status="fallback",
+                tier_used=tier_used,
+                fallback_occurred=fallback_occurred,
             )
 
         return AgentRunResult(

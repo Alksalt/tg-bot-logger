@@ -43,3 +43,21 @@ class Database(
     Inherits from specific mixins and the BaseDatabase for connection handling.
     """
     pass
+
+__all__ = [
+    "CoachMemory",
+    "CoachMessage",
+    "Entry",
+    "LevelUpEvent",
+    "LlmUsage",
+    "PlanTarget",
+    "Quest",
+    "SavingsGoal",
+    "ShopItem",
+    "Streak",
+    "TimerSession",
+    "TodoItem",
+    "UserRule",
+    "UserSettings",
+    "Database",
+]

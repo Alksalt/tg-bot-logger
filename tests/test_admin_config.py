@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pytest
 
 from tg_time_logger.db import Database
 from tg_time_logger.db_constants import APP_CONFIG_DEFAULTS

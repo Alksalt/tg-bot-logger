@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
 from telegram import Bot
 

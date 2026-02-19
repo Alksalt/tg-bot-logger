@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Protocol
 
 from tg_time_logger.db_converters import _row_to_entry, _row_to_llm_usage, _row_to_timer

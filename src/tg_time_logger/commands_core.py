@@ -170,8 +170,8 @@ def _quest_pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, dict[str, ob
 def _quest_cleanup(context: ContextTypes.DEFAULT_TYPE, now_iso: str) -> None:
     store = _quest_pending(context)
     stale = [t for t, p in store.items() if str(p.get("expires_at", "")) <= now_iso]
-    for t in stale:
-        store.pop(t, None)
+    for token in stale:
+        store.pop(token, None)
 
 
 def _build_quest_generation_prompt(
@@ -289,7 +289,7 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         quest_lines.append(f"✅ Quest: {item.quest.title} (+{item.quest.reward_fun_minutes}m)")
     if quest_sync.penalty_minutes_applied > 0:
         quest_lines.append(f"⚠️ Quest penalties applied: -{quest_sync.penalty_minutes_applied}m")
-    quest_block = f"\n\n" + "\n".join(quest_lines) if quest_lines else ""
+    quest_block = "\n\n" + "\n".join(quest_lines) if quest_lines else ""
     await update.effective_message.reply_text(
         (
             f"Logged {minutes}m {outcome.entry.category}.\n"
@@ -343,7 +343,7 @@ async def cmd_spend(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         quest_lines.append(f"✅ Quest: {item.quest.title} (+{item.quest.reward_fun_minutes}m)")
     if quest_sync.penalty_minutes_applied > 0:
         quest_lines.append(f"⚠️ Quest penalties applied: -{quest_sync.penalty_minutes_applied}m")
-    quest_block = f"\n" + "\n".join(quest_lines) if quest_lines else ""
+    quest_block = "\n" + "\n".join(quest_lines) if quest_lines else ""
     await update.effective_message.reply_text(
         f"{localize(lang, 'Logged spend {minutes}m.', 'Додано витрати {minutes}хв.', minutes=minutes)}\n\n{status_message(view, username=update.effective_user.username, lang=lang)}{quest_block}",
         reply_markup=build_keyboard(),
@@ -568,7 +568,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             quest_lines.append(f"✅ Quest: {item.quest.title} (+{item.quest.reward_fun_minutes}m)")
         if quest_sync.penalty_minutes_applied > 0:
             quest_lines.append(f"⚠️ Quest penalties applied: -{quest_sync.penalty_minutes_applied}m")
-        quest_block = f"\n" + "\n".join(quest_lines) if quest_lines else ""
+        quest_block = "\n" + "\n".join(quest_lines) if quest_lines else ""
         await update.effective_message.reply_text(
             (
                 f"⏱️ Spend session complete: {minutes}m\n\n"
@@ -597,7 +597,7 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         quest_lines.append(f"✅ Quest: {item.quest.title} (+{item.quest.reward_fun_minutes}m)")
     if quest_sync.penalty_minutes_applied > 0:
         quest_lines.append(f"⚠️ Quest penalties applied: -{quest_sync.penalty_minutes_applied}m")
-    quest_block = f"\n\n" + "\n".join(quest_lines) if quest_lines else ""
+    quest_block = "\n\n" + "\n".join(quest_lines) if quest_lines else ""
 
     await update.effective_message.reply_text(
         (
@@ -987,12 +987,14 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 InlineKeyboardButton("❌ Decline", callback_data=f"q2:n:{token}"),
             ]
         ])
+        start_str = now.strftime('%Y-%m-%d')
+        end_str = (now + timedelta(days=proposal_payload['duration_days'])).strftime('%Y-%m-%d')
         await pending.edit_text(
             (
                 "🧩 Quest Proposal\n"
                 f"Title: {proposal_payload['title']}\n"
                 f"Difficulty: {proposal_payload['difficulty']}\n"
-                f"Duration: {proposal_payload['duration_days']} days\n"
+                f"Duration: {start_str} to {end_str}\n"
                 f"Target: {cond_target}m ({cond_cat})\n"
                 f"Reward/Penalty: +{proposal_payload['reward_fun_minutes']}m / -{proposal_payload['penalty_fun_minutes']}m"
                 f"{extra_line}\n\n"
@@ -1037,13 +1039,19 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         answer = str(result.get("answer", "")).strip()
         model_used = str(result.get("model", "unknown"))
+        fallback_occurred = bool(result.get("fallback_occurred", False))
+        tier_used = str(result.get("tier", "unknown"))
+        
         if not answer:
             await pending.edit_text(localize(lang, "Could not respond right now. Try again later.", "Зараз не зміг відповісти. Спробуй пізніше."))
             return
+            
+        fallback_warning = f"\n⚠️ _Fell back to {tier_used} tier ({model_used})_\n" if fallback_occurred else ""
+        
         try:
-            await pending.edit_text(f"{answer}\n\n`chat | {model_used}`", parse_mode="Markdown")
+            await pending.edit_text(f"{answer}\n{fallback_warning}\n`chat | {model_used}`", parse_mode="Markdown")
         except Exception:
-            await pending.edit_text(f"{answer}\n\nchat | {model_used}")
+            await pending.edit_text(f"{answer}\n{fallback_warning}\nchat | {model_used}")
         return
 
     if context.args and context.args[0].lower() == "clear":
@@ -1107,13 +1115,18 @@ async def cmd_llm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     model_used = str(result.get("model", "unknown"))
     tier_used = str(result.get("tier", "unknown"))
     status = str(result.get("status", "unknown"))
+    fallback_occurred = bool(result.get("fallback_occurred", False))
     prompt_tokens = int(result.get("prompt_tokens", 0) or 0)
     completion_tokens = int(result.get("completion_tokens", 0) or 0)
+    
     if not answer:
         await pending.edit_text(localize(lang, "LLM could not answer right now. Try again later.", "LLM зараз не зміг відповісти. Спробуй пізніше."))
         return
+        
+    fallback_warning = f"\n\n⚠️ _Note: Requested tier failed. Fell back to {tier_used} tier ({model_used})._" if fallback_occurred else ""
+    
     await pending.edit_text(
-        f"{answer}\n\n`model: {model_used} | tier: {tier_used} | status: {status} | tok: {prompt_tokens}/{completion_tokens}`"
+        f"{answer}{fallback_warning}\n\n`model: {model_used} | tier: {tier_used} | status: {status} | tok: {prompt_tokens}/{completion_tokens}`"
     )
 
 
@@ -1317,13 +1330,15 @@ async def handle_quest_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
     db.set_quest_proposal_status(proposal_id, "accepted", now)
     store.pop(token, None)
+    start_str = quest.starts_at.strftime('%Y-%m-%d')
+    end_str = quest.expires_at.strftime('%Y-%m-%d')
     try:
         db.add_coach_memory(
             user_id=user_id,
             category="context",
             content=(
                 f"accepted quest: [{quest.difficulty}] {quest.title} "
-                f"({quest.duration_days}d, +{quest.reward_fun_minutes}/-{quest.penalty_fun_minutes})"
+                f"({start_str} to {end_str}, +{quest.reward_fun_minutes}/-{quest.penalty_fun_minutes})"
             ),
             tags=f"quest,accepted,{quest.difficulty}",
             created_at=now,
@@ -1334,7 +1349,7 @@ async def handle_quest_callback(update: Update, context: ContextTypes.DEFAULT_TY
         (
             localize(lang, "Quest accepted.", "Квест прийнято.")
             + "\n"
-            + f"{quest.title} ({quest.difficulty}, {quest.duration_days}d)\n"
+            + f"{quest.title} ({quest.difficulty}, {start_str} to {end_str})\n"
             + f"Reward/Penalty: +{quest.reward_fun_minutes}m / -{quest.penalty_fun_minutes}m"
         )
     )
@@ -1352,8 +1367,8 @@ def _ff_pending(context: ContextTypes.DEFAULT_TYPE) -> dict[str, dict[str, objec
 def _ff_cleanup(context: ContextTypes.DEFAULT_TYPE, now_iso: str) -> None:
     store = _ff_pending(context)
     stale = [t for t, p in store.items() if str(p.get("expires_at", "")) <= now_iso]
-    for t in stale:
-        store.pop(t, None)
+    for token in stale:
+        store.pop(token, None)
 
 
 async def handle_free_form(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
