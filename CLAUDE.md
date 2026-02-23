@@ -19,15 +19,15 @@ uv run python jobs.py <job_name> # run a scheduled job
 ```
 bot.py / admin.py / jobs.py          # entry points
 src/tg_time_logger/
-  telegram_bot.py                    # handler registration (the wiring point)
-  commands_core.py                   # /log, /spend, /status, /undo, /plan, /start (onboarding), /timer, /stop, /llm, /notes
+  telegram_bot.py                    # handler registration and bot menu commands wiring
+  commands_core.py                   # /log, /spend, /status, /undo, /plan, /start, /timer, /stop
+  commands_llm.py                    # /llm (quest generation, free-form text parsing, AI chat)
   commands_help.py                   # /help with paginated guide system
-  commands_quests.py                 # /quests
+  commands_quests.py                 # /quests (multi-category support)
   commands_settings.py               # /settings (lang, reminders, quiet hours)
   commands_shop.py                   # /shop (items, buy, save, fund, goal, freeze, price, budget)
   commands_todo.py                   # /todo
   commands_shared.py                 # shared helpers: touch_user, get_db, get_settings, build_keyboard
-  config.py                         # Settings dataclass from env vars
   config.py                         # Settings dataclass from env vars
   db_repo/                          # Database repositories (users, logs, gamification, etc.)
   db.py                             # Database facade inheriting from db_repo mixins
@@ -128,7 +128,7 @@ Agent loop constraints:
 - Max 6 steps, max 4 tool calls per request
 - 1800 input tokens/step, 420 output tokens/step, 6000 total budget
 - Tier escalation: free → open_source_cheap → top_tier (if enabled)
-- All LLM calls go through OpenRouter API
+- All LLM calls go through OpenRouter/OpenAI API with strict `response_format={"type": "json_object"}`.
 
 Tool system:
 - `Tool` protocol: `name`, `description`, `tags`, `run(args, ctx) → ToolResult`
@@ -160,6 +160,9 @@ Tool system:
 - `/help <topic>` → brief help + Guide button
 - Guide button opens paginated walkthrough (edit_message_text + InlineKeyboard)
 - 7 guides, callback format: `guide:<topic>:<page>`
+
+### Telegram Bot Menu
+- Native telegram UI menu is mapped using `bot.set_my_commands()` via application `post_init` hook.
 
 ## Key Conventions
 
