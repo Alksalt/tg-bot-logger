@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from tg_time_logger.commands_core import _build_quest_json_repair_prompt, _quest_candidate_tiers
+from tg_time_logger.commands_llm import _build_quest_json_repair_prompt, _quest_candidate_tiers
 
 
 def test_quest_candidate_tiers_with_all_keys() -> None:

@@ -141,8 +141,9 @@ async def handle_guide_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if action == "back":
         try:
             await query.edit_message_text(_help_overview_text())
-        except BadRequest:
-            pass
+        except BadRequest as exc:
+            if "Message is not modified" not in str(exc):
+                raise
         return
 
     if len(parts) != 3:
@@ -160,8 +161,9 @@ async def handle_guide_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text(
                 localize(lang, "Guide not found.", "\u0414\u043e\u0432\u0456\u0434\u043a\u0443 \u043d\u0435 \u0437\u043d\u0430\u0439\u0434\u0435\u043d\u043e.")
             )
-        except BadRequest:
-            pass
+        except BadRequest as exc:
+            if "Message is not modified" not in str(exc):
+                raise
         return
 
     title = GUIDE_TITLES.get(topic, topic.title())
@@ -172,8 +174,9 @@ async def handle_guide_callback(update: Update, context: ContextTypes.DEFAULT_TY
             header + text,
             reply_markup=_guide_nav_keyboard(topic, page, total, lang),
         )
-    except BadRequest:
-        pass
+    except BadRequest as exc:
+        if "Message is not modified" not in str(exc):
+            raise
 
 
 # ---------------------------------------------------------------------------

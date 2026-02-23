@@ -250,8 +250,9 @@ async def handle_todo_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         text, keyboard = _render_todo_list(items, item.plan_date, lang)
         try:
             await query.edit_message_text(text, reply_markup=keyboard)
-        except BadRequest:
-            pass
+        except BadRequest as exc:
+            if "Message is not modified" not in str(exc):
+                raise
 
         # If item has duration, suggest a category via LLM
         if item.duration_minutes:
@@ -327,8 +328,9 @@ async def handle_todo_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                     f"Записано {item.duration_minutes}m {cat} \u2705",
                 )
             )
-        except BadRequest:
-            pass
+        except BadRequest as exc:
+            if "Message is not modified" not in str(exc):
+                raise
         return
 
     if parts[1] == "no" and len(parts) == 3:
@@ -336,8 +338,9 @@ async def handle_todo_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text(
                 localize(lang, "Skipped", "Пропущено")
             )
-        except BadRequest:
-            pass
+        except BadRequest as exc:
+            if "Message is not modified" not in str(exc):
+                raise
         return
 
 

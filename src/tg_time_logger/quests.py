@@ -537,6 +537,4 @@ def sync_quests_for_user(db: Database, user_id: int, now: datetime) -> QuestSync
     )
 
 
-def check_quests_for_user(db: Database, user_id: int, now: datetime) -> list[QuestProgress]:
-    # Backward-compatible alias.
-    return sync_quests_for_user(db, user_id, now).completed
+
