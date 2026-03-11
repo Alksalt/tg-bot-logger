@@ -9,6 +9,7 @@ from telegram import Bot
 
 from tg_time_logger.config import Settings
 from tg_time_logger.db import Database
+from tg_time_logger.db_constants import STREAK_MINUTES_REQUIRED
 from tg_time_logger.gamification import format_minutes_hm
 from tg_time_logger.service import compute_status
 from tg_time_logger.time_utils import in_quiet_hours, now_local, week_range_for
@@ -116,6 +117,23 @@ async def run_reminders(db: Database, settings: Settings) -> None:
                 db.mark_event_sent(user_id, event_key, now)
                 logger.info("sent daily goal reminder user_id=%s", user_id)
 
+        # Streak risk warning: nudge if streak > 3 days and not enough today
+        streak = db.get_streak(user_id, now)
+        if streak.current_streak > 3 and productive_today < STREAK_MINUTES_REQUIRED:
+            remaining = STREAK_MINUTES_REQUIRED - productive_today
+            event_key = f"streak-risk:{date_key}"
+            if not db.was_event_sent(user_id, event_key):
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"You're at {format_minutes_hm(productive_today)} today \u2014 "
+                        f"{format_minutes_hm(remaining)} more to keep your "
+                        f"{streak.current_streak}-day streak \U0001f525"
+                    ),
+                )
+                db.mark_event_sent(user_id, event_key, now)
+                logger.info("sent streak risk warning user_id=%s streak=%s", user_id, streak.current_streak)
+
         # Near-completion milestone nudges.
         total_productive = db.sum_minutes(user_id, "productive")
         next_block = ((total_productive // 600) + 1) * 600
@@ -134,6 +152,50 @@ async def run_reminders(db: Database, settings: Settings) -> None:
                 logger.info("sent milestone nudge user_id=%s block=%s", user_id, next_block)
 
 
+async def run_daily_digest(db: Database, settings: Settings) -> None:
+    if not db.is_job_enabled("daily_digest"):
+        logger.info("job disabled: daily_digest")
+        return
+    now = now_local(settings.tz)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    bot = Bot(token=settings.telegram_bot_token)
+
+    for profile in db.get_all_user_profiles():
+        user_id = int(profile["user_id"])
+        chat_id = int(profile["chat_id"])
+
+        productive_today = db.sum_minutes(user_id, "productive", start=day_start, end=now)
+        if productive_today == 0:
+            continue
+
+        date_key = now.date().isoformat()
+        event_key = f"daily-digest:{date_key}"
+        if db.was_event_sent(user_id, event_key):
+            continue
+
+        categories = db.sum_productive_by_category(user_id, start=day_start, end=now)
+        cat_parts = []
+        for key in ("study", "build", "training", "job"):
+            mins = categories.get(key, 0)
+            if mins > 0:
+                cat_parts.append(f"{key.capitalize()} {format_minutes_hm(mins)}")
+        cat_text = f" ({', '.join(cat_parts)})" if cat_parts else ""
+
+        xp_today = db.sum_xp(user_id, start=day_start, end=now)
+        streak = db.get_streak(user_id, now)
+        view = compute_status(db, user_id, now)
+
+        text = (
+            f"Today: {format_minutes_hm(productive_today)}{cat_text} "
+            f"\u00b7 +{xp_today} XP "
+            f"\u00b7 \U0001f525 {streak.current_streak}d "
+            f"\u00b7 Fun: {view.economy.remaining_fun_minutes}m"
+        )
+        await bot.send_message(chat_id=chat_id, text=text)
+        db.mark_event_sent(user_id, event_key, now)
+        logger.info("sent daily digest user_id=%s", user_id)
+
+
 def run_job(job_name: str, db: Database, settings: Settings) -> None:
     if not db.is_job_enabled(job_name):
         logger.info("job disabled: %s", job_name)
@@ -142,8 +204,10 @@ def run_job(job_name: str, db: Database, settings: Settings) -> None:
         asyncio.run(run_sunday_summary(db, settings))
     elif job_name == "reminders":
         asyncio.run(run_reminders(db, settings))
+    elif job_name == "daily_digest":
+        asyncio.run(run_daily_digest(db, settings))
     else:
         raise SystemExit(
             "Unknown job "
-            f"'{job_name}'. Expected one of: sunday_summary, reminders"
+            f"'{job_name}'. Expected one of: sunday_summary, reminders, daily_digest"
         )

@@ -64,14 +64,52 @@ def status_message(view: StatusView, username: str | None = None) -> str:
         f"Week:  {week_cats}{job_line}",
         "",
         chart_block,
-        "",
-        f"\U0001f4b0 Fun: {view.economy.remaining_fun_minutes}m remaining",
     ]
+
+    diff = view.week.productive_minutes - view.last_week_productive_minutes
+    if diff > 0:
+        lines.append(f"\u2191 {format_minutes_hm(diff)} vs last week")
+    elif diff < 0:
+        lines.append(f"\u2193 {format_minutes_hm(abs(diff))} vs last week")
+
+    lines.append("")
+    lines.append(f"\U0001f4b0 Fun: {view.economy.remaining_fun_minutes}m remaining")
 
     if view.economy.remaining_fun_minutes < 0:
         lines.append(f"\u26a0\ufe0f {NEGATIVE_WARNING}")
 
     return "\n".join(lines)
+
+
+def log_confirmation(minutes: int, category: str, xp: int, fun: int, streak_days: int) -> str:
+    parts = [f"Logged {format_minutes_hm(minutes)} {category}"]
+    if xp > 0:
+        parts.append(f"+{xp} XP")
+    if fun > 0:
+        parts.append(f"+{fun}m fun")
+    if streak_days > 0:
+        parts.append(f"\U0001f525 {streak_days}d")
+    return " \u00b7 ".join(parts)
+
+
+def spend_confirmation(minutes: int, remaining_fun: int) -> str:
+    return f"Spent {format_minutes_hm(minutes)} \u00b7 Fun: {remaining_fun}m remaining"
+
+
+def timer_confirmation(
+    minutes: int, category: str, xp: int, fun: int, streak_days: int, deep_mult: float,
+) -> str:
+    parts = [f"\u23f1 {format_minutes_hm(minutes)} {category}"]
+    if xp > 0:
+        xp_str = f"+{xp} XP"
+        if deep_mult > 1.0:
+            xp_str += f" ({deep_mult:.1f}x deep)"
+        parts.append(xp_str)
+    if fun > 0:
+        parts.append(f"+{fun}m fun")
+    if streak_days > 0:
+        parts.append(f"\U0001f525 {streak_days}d")
+    return " \u00b7 ".join(parts)
 
 
 def entry_removed_message(entry: Entry) -> str:

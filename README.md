@@ -1,203 +1,47 @@
-# Telegram Time Logger v3 (Gamified + AI Agent)
+# Telegram Time Logger
 
-Telegram productivity bot with categories, XP/levels, streaks, quests, shop economy, savings, AI analytics (/llm), conversational coach (/coach), web search, and interactive help guides.
-
-## Stack
-
-- Python 3.11+
-- `python-telegram-bot`
-- SQLite (18 auto-migrations)
-- `uv` for dependency/runtime management
-- V3 agent runtime with configurable LLM tiers (free/open_source/kimi/deepseek/qwen/gpt/gemini/claude/top)
-- Web search: Brave/Tavily/Serper with fallback + cache
+Productivity bot that tracks time, gamifies work with XP/levels/streaks, and runs a fun-minutes economy. Single-user, self-hosted, SQLite-backed.
 
 ## Setup
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
+# Set TELEGRAM_BOT_TOKEN and DATABASE_PATH in .env
 ```
-
-## Environment
-
-`.env` is auto-loaded.
-
-```bash
-TELEGRAM_BOT_TOKEN=<your_bot_token>
-DATABASE_PATH=./data/app.db
-TZ=Europe/Oslo
-LLM_ENABLED=0
-OPENAI_API_KEY=<key>
-OPENROUTER_API_KEY=<key>
-ANTHROPIC_API_KEY=<key>
-GOOGLE_API_KEY=<key>
-BRAVE_SEARCH_API_KEY=<key>
-TAVILY_API_KEY=<key>
-SERPER_API_KEY=<key>
-NOTION_API_KEY=<key>
-NOTION_DATABASE_ID=<database_id>
-NOTION_BACKUP_DIR=./data/notion_backups
-NOTION_BACKEND=api
-NOTION_MCP_URL=
-NOTION_MCP_AUTH_TOKEN=
-NOTION_MCP_TOOL_NAME=notion-create-pages
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-5-mini
-LLM_ROUTER_CONFIG=./llm_router.yaml
-ADMIN_PANEL_TOKEN=<strong_random_token>
-ADMIN_HOST=127.0.0.1
-ADMIN_PORT=8080
-AGENT_MODELS_PATH=./agents/models.yaml
-AGENT_DIRECTIVE_PATH=./agents/directives/llm_assistant.md
-```
-
-LLM model/provider defaults are read from `./llm_router.yaml`.
-Default route is `openai:gpt-5-mini`.
 
 ## Run
 
 ```bash
-uv run python bot.py
-```
-
-Admin panel:
-
-```bash
-uv run python admin.py
-```
-
-Open:
-- `http://127.0.0.1:8080/?token=<ADMIN_PANEL_TOKEN>`
-- If `ADMIN_PANEL_TOKEN` is empty, panel is open without auth (not recommended).
-- Admin now shows `Search Provider Health` with request/success/fail/cache/rate-limit counters.
-
-## Jobs
-
-```bash
+uv run python bot.py             # start the bot
+uv run python admin.py           # admin panel (http://127.0.0.1:8080)
+uv run python jobs.py reminders  # scheduled reminders
 uv run python jobs.py sunday_summary
-uv run python jobs.py reminders
-uv run python jobs.py midweek
-uv run python jobs.py notion_backup
 ```
 
 ## Commands
 
-Core:
-- `/log <duration> [study|build|training|job] [note]`
-- `/spend <duration> [note]`
-- `/status`
-- `/week`
-- `/undo`
-- `/help [command]`
-- `/rules`
-- `/rules add <text>`
-- `/rules remove <id>`
-- `/rules clear`
-- `/llm <question>`
-- `/llm quest <easy|medium|hard> [3|5|7|14|21]`
-- `/llm quests [3|5|7|14|21]` (random difficulty)
-- `/llm health`
-- `/llm models`
-- `/search <query>`
-- `/lang`
-- `/lang <en|uk>`
-- `/settings tier <name|default>`
-- `/start [study|build|training|job|spend] [note]`
-- `/stop`
-
-Coach (AI with memory):
-- `/coach <message>`
-- `/coach clear`
-- `/coach memory`
-- `/coach forget <id>`
-
-Plan/reminders:
-- `/plan set <duration>`
-- `/plan show`
-- `/reminders on|off`
-- `/quiet_hours HH:MM-HH:MM`
-- `/freeze`
-
-Quests/shop/savings:
-- `/quests`
-- `/quests history`
-- `/quests reset`
-- `/shop`
-- `/shop add <emoji> "name" <cost_minutes_or_duration> [nok_value]`
-- `/shop add <emoji> "name" <nok_value>nok`
-- `/shop price <emoji> "name" <search query>`
-- `/shop price <emoji> "name" <search query> --add` (confirm via button)
-- `/shop remove <id>`
-- `/shop budget <minutes|off>`
-- `/redeem <item_id|item_name>`
-- `/redeem history`
-- `/save`
-- `/save goal <target_duration> [name]`
-- `/save fund <duration>`
-- `/save sunday on 50|60|70`
-- `/save sunday off`
-- `/save auto <duration>`
-
-Savings behavior:
-- Save fund is locked from normal fun usage.
-- Shop redemption spends from save fund first, then from remaining fun.
-- If a redemption is fully covered by save fund, remaining fun does not decrease.
-
-Price conversion:
-- Default: `1 NOK = 3 fun min` (tunable via admin key `economy.nok_to_fun_minutes`).
-- `/shop price ...` uses web search and suggests a command with converted cost.
-- `/shop price ... --add` creates a pending add; press **Confirm add** button to save item.
-
-Notion backup:
-- `uv run python jobs.py notion_backup` writes per-user JSON snapshots to `NOTION_BACKUP_DIR`.
-- Backend switch:
-  - `NOTION_BACKEND=api` uses Notion REST API (`NOTION_API_KEY` + `NOTION_DATABASE_ID`)
-  - `NOTION_BACKEND=mcp` uses JSON-RPC MCP endpoint (`NOTION_MCP_URL`, optional `NOTION_MCP_AUTH_TOKEN`)
-  - `NOTION_BACKEND=auto` tries MCP first, then REST API fallback
-- MCP tool name defaults to `notion-create-pages` (override with `NOTION_MCP_TOOL_NAME`).
-- The Notion database must have at least one **Title** property.
-
-Cron example (daily backup):
-
-```cron
-# Every day at 02:10 (server local time; set server TZ=Europe/Oslo)
-10 2 * * * cd /path/to/tg-time-logger && uv run python jobs.py notion_backup >> logs/notion_backup.log 2>&1
-```
+| Command | What it does |
+|---------|-------------|
+| `/start` | Welcome / onboarding |
+| `/log` | Log productive time (study/build/training/job) |
+| `/spend` | Log fun/consumption time |
+| `/timer` (`/t`) | Start a timer session |
+| `/stop` | Stop active timer |
+| `/status` | Level, XP, streak, economy, weekly chart |
+| `/undo` | Undo last entry |
+| `/settings` | Reminders, quiet hours |
+| `/help` | Help and guide system |
 
 Duration formats: `90m`, `1.5h`, `1h20m`, `45`
-
-Streak rule: at least `120m` productive in a day is required to count as a streak day.
-
-## Migrations
-
-Migrations run automatically when `Database(...)` initializes (bot or jobs). Existing data is upgraded in place.
-
-18 migrations covering: entries with category/xp/fun/deep-work, level-ups, streaks, quests, shop, redemptions, savings, LLM usage, user rules, app config, audit log, search cache, user profiles, user language, notion config, admin audit, coach messages, and coach memory.
-
-## V3 Agent Layout
-
-- `agents/directives/` human SOP specs.
-- `agents/execution/` deterministic runtime logic.
-- `agents/orchestration/` thin wiring layer.
-- `agents/tools/` tool implementations/registry.
-- `TOOLS.md` tool manifest.
-
-## Quest Generation (Quests 2.0)
-
-- No auto-generated quests from scheduled jobs.
-- Manual generation via LLM:
-  - `/llm quest easy|medium|hard [3|5|7|14|21]`
-  - `/llm quests [3|5|7|14|21]` for random difficulty
-- Bot shows a proposal with **Accept / Decline** buttons before creating a quest.
-- Difficulty/reward baseline (7-day):
-  - easy: min 300m, reward 30-45m
-  - medium: min 720m, reward 60-90m
-  - hard: min 1200m, reward 120-180m
-- Reward/penalty mirror rule: penalty equals reward.
-- Build-first strategy: quests should prioritize build (around 60-70% focus), with study/training as supporting tracks.
 
 ## Test
 
 ```bash
 uv run pytest
 ```
+
+## Environment
+
+Required: `TELEGRAM_BOT_TOKEN`, `DATABASE_PATH`
+Optional: `TZ` (default: Europe/Oslo), `ADMIN_PANEL_TOKEN`, `ADMIN_HOST`, `ADMIN_PORT`

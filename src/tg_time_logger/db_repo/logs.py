@@ -29,7 +29,7 @@ class LogMixin:
         fun_earned: int | None = None,
         deep_work_multiplier: float = 1.0,
     ) -> Entry:
-        if kind not in {"productive", "spend", "other"}:
+        if kind not in {"productive", "spend", "other", "adjustment"}:
             raise ValueError("kind must be productive, spend, or other")
 
         tuning = self.get_economy_tuning()
@@ -99,6 +99,17 @@ class LogMixin:
                 "UPDATE entries SET deleted_at = ? WHERE id = ?",
                 (deleted_at.isoformat(), row["id"]),
             )
+            # Clean up level_up_events created alongside this entry
+            entry_created = row["created_at"]
+            if row["kind"] == "productive" and int(row["xp_earned"] or 0) > 0:
+                conn.execute(
+                    """
+                    DELETE FROM level_up_events
+                    WHERE user_id = ?
+                      AND abs(julianday(created_at) - julianday(?)) < 0.00003
+                    """,
+                    (user_id, entry_created),
+                )
             updated = conn.execute("SELECT * FROM entries WHERE id = ?", (row["id"],)).fetchone()
         assert updated is not None
         return _row_to_entry(updated)
@@ -309,6 +320,76 @@ class LogMixin:
             ).fetchone()
         return int(row["total"]) if row else 0
 
+    def list_entries(
+        self: DbProtocol,
+        user_id: int,
+        limit: int = 50,
+        include_deleted: bool = False,
+    ) -> list[Entry]:
+        capped = max(1, min(int(limit), 500))
+        deleted_filter = "" if include_deleted else "AND deleted_at IS NULL"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM entries
+                WHERE user_id = ? {deleted_filter}
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (user_id, capped),
+            ).fetchall()
+        return [_row_to_entry(r) for r in rows]
+
+    def soft_delete_entry(self: DbProtocol, entry_id: int, deleted_at: datetime) -> Entry | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM entries WHERE id = ? AND deleted_at IS NULL", (entry_id,)).fetchone()
+            if row is None:
+                return None
+            conn.execute("UPDATE entries SET deleted_at = ? WHERE id = ?", (deleted_at.isoformat(), entry_id))
+            # Clean up level_up_events if this was a productive entry with XP
+            if row["kind"] == "productive" and int(row["xp_earned"] or 0) > 0:
+                conn.execute(
+                    """
+                    DELETE FROM level_up_events
+                    WHERE user_id = ?
+                      AND abs(julianday(created_at) - julianday(?)) < 0.00003
+                    """,
+                    (row["user_id"], row["created_at"]),
+                )
+            updated = conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        assert updated is not None
+        return _row_to_entry(updated)
+
+    def add_fun_adjustment(
+        self: DbProtocol,
+        user_id: int,
+        minutes: int,
+        note: str,
+        created_at: datetime,
+    ) -> Entry:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO entries(
+                    user_id, entry_type, category, kind, minutes, xp_earned, fun_earned,
+                    deep_work_multiplier, note, created_at, source
+                )
+                VALUES (?, 'spend', 'adjustment', 'adjustment', 1, 0, ?, 1.0, ?, ?, 'admin')
+                """,
+                (user_id, minutes, note, created_at.isoformat()),
+            )
+            row = conn.execute("SELECT * FROM entries WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        assert row is not None
+        return _row_to_entry(row)
+
+    def sum_fun_adjustments(self: DbProtocol, user_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(fun_earned), 0) AS total FROM entries WHERE user_id = ? AND kind = 'adjustment' AND deleted_at IS NULL",
+                (user_id,),
+            ).fetchone()
+        return int(row["total"]) if row else 0
+
     def get_or_start_timer(
         self: DbProtocol,
         user_id: int,
@@ -336,6 +417,14 @@ class LogMixin:
             ).fetchone()
         assert created is not None
         return None, _row_to_timer(created)
+
+    def get_active_timer(self: DbProtocol, user_id: int) -> TimerSession | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT user_id, category, note, started_at FROM timer_sessions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return _row_to_timer(row) if row else None
 
     def stop_timer(self: DbProtocol, user_id: int) -> TimerSession | None:
         with self._connect() as conn:

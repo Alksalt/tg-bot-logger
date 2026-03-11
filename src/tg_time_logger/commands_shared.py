@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from tg_time_logger.config import Settings
 from tg_time_logger.db import Database
-from tg_time_logger.gamification import get_title
+from tg_time_logger.db_models import TimerSession
+from tg_time_logger.gamification import format_minutes_hm, get_title
 
 
-def build_keyboard(*, timer_running: bool = False) -> ReplyKeyboardMarkup:
-    if timer_running:
+def build_keyboard(
+    *, timer_session: TimerSession | None = None, now: datetime | None = None,
+) -> ReplyKeyboardMarkup:
+    if timer_session is not None and now is not None:
+        elapsed = max(int((now - timer_session.started_at).total_seconds() // 60), 0)
+        cat = timer_session.category.capitalize()
+        stop_label = f"\u23f9 Stop \u00b7 {cat} \u00b7 {format_minutes_hm(elapsed)}"
         return ReplyKeyboardMarkup(
-            [[KeyboardButton("\u23f9 Stop Timer")]],
+            [[KeyboardButton(stop_label)], [KeyboardButton("\U0001f5d1 Discard")]],
             resize_keyboard=True,
         )
     rows = [

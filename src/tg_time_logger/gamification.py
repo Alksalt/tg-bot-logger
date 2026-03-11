@@ -95,11 +95,8 @@ class EconomyBreakdown:
     base_fun_minutes: int
     milestone_bonus_minutes: int
     level_bonus_minutes: int
-    quest_bonus_minutes: int
-    wheel_bonus_minutes: int
     earned_fun_minutes: int
     spent_fun_minutes: int
-    saved_fun_minutes: int
     remaining_fun_minutes: int
 
 
@@ -218,24 +215,18 @@ def build_economy(
     base_fun_minutes: int,
     productive_minutes: int,
     level_bonus_minutes: int,
-    quest_bonus_minutes: int,
-    wheel_bonus_minutes: int,
     spent_fun_minutes: int,
-    saved_fun_minutes: int,
     tuning: dict[str, int] | None = None,
 ) -> EconomyBreakdown:
     _, milestone_bonus = calculate_milestone_bonus(productive_minutes, tuning=tuning)
-    earned = max(0, base_fun_minutes) + milestone_bonus + max(0, level_bonus_minutes) + max(0, quest_bonus_minutes) + max(0, wheel_bonus_minutes)
-    remaining = earned - max(0, spent_fun_minutes) - max(0, saved_fun_minutes)
+    earned = max(0, base_fun_minutes) + milestone_bonus + max(0, level_bonus_minutes)
+    remaining = earned - max(0, spent_fun_minutes)
     return EconomyBreakdown(
         base_fun_minutes=max(0, base_fun_minutes),
         milestone_bonus_minutes=milestone_bonus,
         level_bonus_minutes=max(0, level_bonus_minutes),
-        quest_bonus_minutes=max(0, quest_bonus_minutes),
-        wheel_bonus_minutes=max(0, wheel_bonus_minutes),
         earned_fun_minutes=earned,
         spent_fun_minutes=max(0, spent_fun_minutes),
-        saved_fun_minutes=max(0, saved_fun_minutes),
         remaining_fun_minutes=remaining,
     )
 

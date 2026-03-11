@@ -20,7 +20,13 @@ from tg_time_logger.commands_shared import (
 )
 from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES
-from tg_time_logger.messages import entry_removed_message, status_message
+from tg_time_logger.messages import (
+    entry_removed_message,
+    log_confirmation,
+    spend_confirmation,
+    status_message,
+    timer_confirmation,
+)
 from tg_time_logger.service import add_productive_entry, compute_status, normalize_category
 
 logger = logging.getLogger(__name__)
@@ -65,6 +71,7 @@ def _duration_picker(callback_prefix: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton("2h", callback_data=f"{callback_prefix}:120"),
             InlineKeyboardButton("3h", callback_data=f"{callback_prefix}:180"),
         ],
+        [InlineKeyboardButton("Custom...", callback_data=f"{callback_prefix}:custom")],
     ])
 
 
@@ -72,79 +79,66 @@ def _duration_picker(callback_prefix: str) -> InlineKeyboardMarkup:
 # Shared action helpers (used by both commands and menu/callback handlers)
 # ---------------------------------------------------------------------------
 
+def _kb(db, user_id, now):
+    """Build keyboard with timer awareness."""
+    session = db.get_active_timer(user_id)
+    return build_keyboard(timer_session=session, now=now)
+
+
 async def _do_log(update, context, user_id, now, minutes, category, note=None, source="manual"):
-    """Log a productive entry and send the response."""
+    """Log a productive entry and send compact confirmation."""
     db = get_db(context)
     outcome = add_productive_entry(
-        db=db,
-        user_id=user_id,
-        minutes=minutes,
-        category=category,
-        note=note,
-        created_at=now,
-        source=source,
-        timer_mode=False,
+        db=db, user_id=user_id, minutes=minutes, category=category,
+        note=note, created_at=now, source=source, timer_mode=False,
     )
-    view = compute_status(db, user_id, now)
     msg = update.callback_query.message if update.callback_query else update.effective_message
     await msg.reply_text(
-        (
-            f"Logged {minutes}m {outcome.entry.category}.\n"
-            f"⚡ XP earned: {outcome.xp_earned} ({outcome.streak_mult:.1f}x streak)\n"
-            f"💰 Fun earned: +{outcome.entry.fun_earned}m\n\n"
-            f"{status_message(view, username=update.effective_user.username)}"
-        ),
-        reply_markup=build_keyboard(),
+        log_confirmation(minutes, outcome.entry.category, outcome.xp_earned,
+                         outcome.entry.fun_earned, outcome.streak.current_streak),
+        reply_markup=_kb(db, user_id, now),
     )
     await send_level_ups(
-        update,
-        context,
-        top_category=outcome.top_week_category,
+        update, context, top_category=outcome.top_week_category,
         level_ups=outcome.level_ups,
-        total_productive_minutes=view.all_time.productive_minutes,
-        xp_remaining=view.xp_remaining_to_next,
+        total_productive_minutes=db.sum_minutes(user_id, "productive"),
+        xp_remaining=0,
     )
 
 
 async def _do_spend(update, context, user_id, now, minutes, note=None, source="manual"):
-    """Log a spend entry and send the response."""
+    """Log a spend entry and send compact confirmation."""
     db = get_db(context)
-    db.add_entry(
-        user_id=user_id,
-        kind="spend",
-        category="spend",
-        minutes=minutes,
-        note=note,
-        created_at=now,
-        source=source,
-    )
+    db.add_entry(user_id=user_id, kind="spend", category="spend",
+                 minutes=minutes, note=note, created_at=now, source=source)
     view = compute_status(db, user_id, now)
     msg = update.callback_query.message if update.callback_query else update.effective_message
     await msg.reply_text(
-        f"Logged spend {minutes}m.\n\n{status_message(view, username=update.effective_user.username)}",
-        reply_markup=build_keyboard(),
+        spend_confirmation(minutes, view.economy.remaining_fun_minutes),
+        reply_markup=_kb(db, user_id, now),
     )
 
 
 async def _do_status(update, context, user_id, now):
-    """Send status message."""
+    """Send full status message."""
     db = get_db(context)
     view = compute_status(db, user_id, now)
     msg = update.callback_query.message if update.callback_query else update.effective_message
     await msg.reply_text(
         status_message(view, username=update.effective_user.username),
-        reply_markup=build_keyboard(),
+        reply_markup=_kb(db, user_id, now),
     )
 
 
 async def _do_undo(update, context, user_id, now):
     """Undo last entry."""
-    removed = get_db(context).undo_last_entry(user_id=user_id, deleted_at=now)
+    db = get_db(context)
+    removed = db.undo_last_entry(user_id=user_id, deleted_at=now)
     msg = update.callback_query.message if update.callback_query else update.effective_message
     if not removed:
-        await msg.reply_text("Nothing to undo", reply_markup=build_keyboard())
+        await msg.reply_text("Nothing to undo", reply_markup=_kb(db, user_id, now))
         return
-    await msg.reply_text(entry_removed_message(removed), reply_markup=build_keyboard())
+    await msg.reply_text(entry_removed_message(removed), reply_markup=_kb(db, user_id, now))
 
 
 async def _do_stop_timer(update, context, user_id, now):
@@ -160,55 +154,30 @@ async def _do_stop_timer(update, context, user_id, now):
     minutes = max(int(elapsed.total_seconds() // 60), 1)
 
     if session.category == "spend":
-        db.add_entry(
-            user_id=user_id,
-            kind="spend",
-            category="spend",
-            minutes=minutes,
-            note=session.note,
-            created_at=now,
-            source="timer",
-        )
+        db.add_entry(user_id=user_id, kind="spend", category="spend",
+                     minutes=minutes, note=session.note, created_at=now, source="timer")
         view = compute_status(db, user_id, now)
         await msg.reply_text(
-            (
-                f"⏱️ Spend session complete: {minutes}m\n\n"
-                f"📝 Logged fun spend: {minutes} min\n\n"
-                f"{status_message(view, username=update.effective_user.username)}"
-            ),
+            spend_confirmation(minutes, view.economy.remaining_fun_minutes),
             reply_markup=build_keyboard(),
         )
         return
 
     outcome = add_productive_entry(
-        db=db,
-        user_id=user_id,
-        minutes=minutes,
-        category=session.category,
-        note=session.note,
-        created_at=now,
-        source="timer",
-        timer_mode=True,
+        db=db, user_id=user_id, minutes=minutes, category=session.category,
+        note=session.note, created_at=now, source="timer", timer_mode=True,
     )
-    view = compute_status(db, user_id, now)
     await msg.reply_text(
-        (
-            f"⏱️ Session complete: {minutes}m ({outcome.entry.category})\n\n"
-            f"📝 Logged: {minutes} min ({outcome.entry.category})\n"
-            f"⚡ XP earned: {outcome.xp_earned} ({outcome.deep_mult:.1f}x deep work, {outcome.streak_mult:.1f}x streak)\n"
-            f"🔥 Streak: {outcome.streak.current_streak} days\n"
-            f"💰 Fun earned: +{outcome.entry.fun_earned} min\n\n"
-            f"{status_message(view, username=update.effective_user.username)}"
-        ),
+        timer_confirmation(minutes, outcome.entry.category, outcome.xp_earned,
+                           outcome.entry.fun_earned, outcome.streak.current_streak,
+                           outcome.deep_mult),
         reply_markup=build_keyboard(),
     )
     await send_level_ups(
-        update,
-        context,
-        top_category=outcome.top_week_category,
+        update, context, top_category=outcome.top_week_category,
         level_ups=outcome.level_ups,
-        total_productive_minutes=view.all_time.productive_minutes,
-        xp_remaining=view.xp_remaining_to_next,
+        total_productive_minutes=db.sum_minutes(user_id, "productive"),
+        xp_remaining=0,
     )
 
 
@@ -311,6 +280,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id, _, now = touch_user(update, context)
+    db = get_db(context)
 
     category = "build"
     tail = context.args
@@ -319,12 +289,11 @@ async def cmd_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         tail = tail[1:]
     note = " ".join(tail).strip() or None
 
-    existing, created = get_db(context).get_or_start_timer(user_id, category, now, note)
-    timer_kb = build_keyboard(timer_running=True)
+    existing, created = db.get_or_start_timer(user_id, category, now, note)
     if existing:
         await update.effective_message.reply_text(
             f"A timer is already running for {existing.category} since {existing.started_at.strftime('%H:%M')}",
-            reply_markup=timer_kb,
+            reply_markup=build_keyboard(timer_session=existing, now=now),
         )
         return
 
@@ -332,7 +301,9 @@ async def cmd_timer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}"
     else:
         text = f"Spend timer started at {created.started_at.strftime('%H:%M')}"
-    await update.effective_message.reply_text(text, reply_markup=timer_kb)
+    await update.effective_message.reply_text(
+        text, reply_markup=build_keyboard(timer_session=created, now=now),
+    )
 
 
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -345,8 +316,27 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ---------------------------------------------------------------------------
 
 async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle taps on the ReplyKeyboard buttons."""
+    """Handle taps on the ReplyKeyboard buttons and custom duration input."""
     text = (update.effective_message.text or "").strip()
+
+    # --- Custom duration input (pending from previous interaction) ---
+    pending = context.user_data.get("pending_custom") if context.user_data else None
+    if pending:
+        try:
+            minutes = parse_duration_to_minutes(text)
+        except DurationParseError:
+            await update.effective_message.reply_text(
+                "Could not parse duration. Try: 45m, 1.5h, 2h30m"
+            )
+            return
+        user_id, _, now = touch_user(update, context)
+        action = pending["action"]
+        context.user_data.pop("pending_custom", None)
+        if action == "log":
+            await _do_log(update, context, user_id, now, minutes, pending["category"], source="button")
+        else:
+            await _do_spend(update, context, user_id, now, minutes, source="button")
+        return
 
     if text == "Log":
         await update.effective_message.reply_text(
@@ -379,9 +369,23 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await _do_undo(update, context, user_id, now)
         return
 
-    if text == "\u23f9 Stop Timer":
+    if text.startswith("\u23f9"):
         user_id, _, now = touch_user(update, context)
         await _do_stop_timer(update, context, user_id, now)
+        return
+
+    if text == "\U0001f5d1 Discard":
+        user_id, _, now = touch_user(update, context)
+        db = get_db(context)
+        session = db.stop_timer(user_id)
+        if not session:
+            await update.effective_message.reply_text("No active timer", reply_markup=build_keyboard())
+            return
+        elapsed = max(int((now - session.started_at).total_seconds() // 60), 1)
+        await update.effective_message.reply_text(
+            f"Discarded {session.category} timer ({elapsed}m)",
+            reply_markup=build_keyboard(),
+        )
         return
 
     # Anything else: ignore silently
@@ -413,15 +417,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # --- New menu flow: log duration selected -> actually log ---
     if data.startswith("menu:log:dur:"):
         parts = data.split(":")
-        # menu:log:dur:<cat>:<min>
         cat = parts[3]
+        if parts[4] == "custom":
+            context.user_data["pending_custom"] = {"action": "log", "category": cat}
+            await query.message.edit_text("Type duration (e.g. 45m, 1.5h, 2h30m):")
+            return
         minutes = int(parts[4])
         await _do_log(update, context, user_id, now, minutes, normalize_category(cat), source="button")
         return
 
     # --- New menu flow: spend duration selected -> actually log spend ---
     if data.startswith("menu:spend:dur:"):
-        minutes = int(data.split(":")[-1])
+        value = data.split(":")[-1]
+        if value == "custom":
+            context.user_data["pending_custom"] = {"action": "spend"}
+            await query.message.edit_text("Type duration (e.g. 45m, 1.5h, 2h30m):")
+            return
+        minutes = int(value)
         await _do_spend(update, context, user_id, now, minutes, source="button")
         return
 
@@ -429,18 +441,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if data.startswith("menu:timer:cat:"):
         cat = data.split(":")[-1]
         existing, created = db.get_or_start_timer(user_id, cat, now, None)
-        timer_kb = build_keyboard(timer_running=True)
         if existing:
             await query.message.reply_text(
                 f"A timer is already running for {existing.category} since {existing.started_at.strftime('%H:%M')}",
-                reply_markup=timer_kb,
+                reply_markup=build_keyboard(timer_session=existing, now=now),
             )
             return
         if created.category != "spend":
             text = f"Timer started for {created.category} at {created.started_at.strftime('%H:%M')}"
         else:
             text = f"Spend timer started at {created.started_at.strftime('%H:%M')}"
-        await query.message.reply_text(text, reply_markup=timer_kb)
+        await query.message.reply_text(
+            text, reply_markup=build_keyboard(timer_session=created, now=now),
+        )
         return
 
     # --- Legacy callback patterns (backward compat) ---

@@ -34,11 +34,6 @@ class UserSettings:
     reminders_enabled: bool
     daily_goal_minutes: int
     quiet_hours: str | None
-    shop_budget_minutes: int | None
-    auto_save_minutes: int
-    sunday_fund_percent: int
-    language_code: str
-    preferred_tier: str | None
 
 
 @dataclass(frozen=True)

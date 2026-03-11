@@ -25,7 +25,7 @@ class UserMixin:
                 (user_id, chat_id, seen_at.isoformat()),
             )
             conn.execute(
-                "INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)",
+                "INSERT OR IGNORE INTO user_settings(user_id) VALUES (?)",
                 (user_id,),
             )
 
@@ -34,9 +34,7 @@ class UserMixin:
             rows = conn.execute(
                 """
                 SELECT p.user_id, p.chat_id, p.last_seen_at,
-                       s.reminders_enabled, s.daily_goal_minutes, s.quiet_hours,
-                       s.shop_budget_minutes, s.auto_save_minutes, s.sunday_fund_percent,
-                       s.language_code
+                       s.reminders_enabled, s.daily_goal_minutes, s.quiet_hours
                 FROM user_profiles p
                 LEFT JOIN user_settings s ON s.user_id = p.user_id
                 """
@@ -46,14 +44,9 @@ class UserMixin:
     def get_settings(self: DbProtocol, user_id: int) -> UserSettings:
         with self._connect() as conn:
             # Keep this one to ensure settings exist when reading
-            conn.execute("INSERT OR IGNORE INTO user_settings(user_id, auto_save_minutes) VALUES (?, 0)", (user_id,))
+            conn.execute("INSERT OR IGNORE INTO user_settings(user_id) VALUES (?)", (user_id,))
             row = conn.execute(
-                """
-                SELECT user_id, reminders_enabled, daily_goal_minutes, quiet_hours,
-                       shop_budget_minutes, auto_save_minutes, sunday_fund_percent,
-                       language_code, preferred_tier
-                FROM user_settings WHERE user_id = ?
-                """,
+                "SELECT user_id, reminders_enabled, daily_goal_minutes, quiet_hours FROM user_settings WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
         assert row is not None
@@ -62,11 +55,6 @@ class UserMixin:
             reminders_enabled=bool(row["reminders_enabled"]),
             daily_goal_minutes=row["daily_goal_minutes"],
             quiet_hours=row["quiet_hours"],
-            shop_budget_minutes=row["shop_budget_minutes"],
-            auto_save_minutes=int(row["auto_save_minutes"] or 0),
-            sunday_fund_percent=int(row["sunday_fund_percent"] or 0),
-            language_code=str(row["language_code"] or "en"),
-            preferred_tier=row["preferred_tier"],
         )
 
     def update_reminders_enabled(self: DbProtocol, user_id: int, enabled: bool) -> None:

@@ -49,14 +49,61 @@ def test_tuning_changes_fun_and_milestone(tmp_path) -> None:
         base_fun_minutes=60,
         productive_minutes=600,
         level_bonus_minutes=0,
-        quest_bonus_minutes=0,
-        wheel_bonus_minutes=0,
         spent_fun_minutes=0,
-        saved_fun_minutes=0,
         tuning=tuning,
     )
     # 600 with 300 block = 2 blocks * 90 = 180
     assert eco.milestone_bonus_minutes == 180
+
+
+def test_list_entries_with_deleted(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 10)
+    db.add_entry(1, "productive", 60, now, category="build")
+    db.add_entry(1, "productive", 30, now, category="study")
+    assert len(db.list_entries(1)) == 2
+    db.soft_delete_entry(1, deleted_at=now)
+    assert len(db.list_entries(1)) == 1
+    assert len(db.list_entries(1, include_deleted=True)) == 2
+
+
+def test_fun_adjustment(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 10)
+    entry = db.add_fun_adjustment(1, minutes=50, note="fix balance", created_at=now)
+    assert entry.kind == "adjustment"
+    assert entry.fun_earned == 50
+    assert db.sum_fun_adjustments(1) == 50
+    # Negative adjustment
+    db.add_fun_adjustment(1, minutes=-20, note="correct", created_at=now)
+    assert db.sum_fun_adjustments(1) == 30
+
+
+def test_list_and_delete_level_up_events(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 10)
+    db.add_level_up_event(1, 2, now)
+    db.add_level_up_event(1, 3, now)
+    events = db.list_level_up_events(1)
+    assert len(events) == 2
+    assert events[0].level == 2
+    db.delete_level_up_event(events[0].id)
+    assert len(db.list_level_up_events(1)) == 1
+
+
+def test_reset_streak(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 10)
+    # Create a streak by logging enough productive time
+    db.add_entry(1, "productive", 120, now, category="build")
+    db.refresh_streak(1, now)
+    streak = db.get_streak(1, now)
+    assert streak.current_streak == 1
+    # Reset
+    db.reset_streak(1, now)
+    streak = db.get_streak(1, now)
+    assert streak.current_streak == 0
+    assert streak.last_productive_date is None
 
 
 def test_snapshot_restore(tmp_path) -> None:

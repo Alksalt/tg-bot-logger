@@ -156,6 +156,30 @@ class GamificationMixin:
         assert row is not None
         return _row_to_level(row)
 
+    def list_level_up_events(self: DbProtocol, user_id: int) -> list[LevelUpEvent]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM level_up_events WHERE user_id = ? ORDER BY level ASC",
+                (user_id,),
+            ).fetchall()
+        return [_row_to_level(r) for r in rows]
+
+    def delete_level_up_event(self: DbProtocol, event_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM level_up_events WHERE id = ?", (event_id,))
+        return cur.rowcount > 0
+
+    def reset_streak(self: DbProtocol, user_id: int, now: datetime) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE streaks
+                SET current_streak = 0, last_productive_date = NULL, updated_at = ?
+                WHERE user_id = ?
+                """,
+                (now.isoformat(), user_id),
+            )
+
     def sum_level_bonus(self: DbProtocol, user_id: int) -> int:
         with self._connect() as conn:
             rows = conn.execute(

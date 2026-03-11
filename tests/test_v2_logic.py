@@ -58,6 +58,22 @@ def test_job_logs_grant_no_xp(tmp_path) -> None:
     assert out.xp_earned == 0
 
 
+def test_undo_cleans_up_level_up_events(tmp_path) -> None:
+    db = Database(tmp_path / "app.db")
+    # Log enough XP to reach level 2 (300 XP needed)
+    outcome = add_productive_entry(db, 1, 300, "build", None, _dt(2026, 2, 9), "manual")
+    assert any(e.level == 2 for e in outcome.level_ups)
+    assert db.max_level_event_level(1) == 2
+
+    # Undo the entry
+    removed = db.undo_last_entry(1, _dt(2026, 2, 9, 10, 1))
+    assert removed is not None
+
+    # Level-up event should be cleaned up (max_level_event_level returns 1 when no events)
+    assert db.max_level_event_level(1) == 1  # no level 2 event remains
+    assert db.sum_level_bonus(1) == 0  # no bonus fun from level-ups
+
+
 def test_deep_work_xp_multiplier_applies(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     out = add_productive_entry(

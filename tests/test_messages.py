@@ -10,10 +10,7 @@ def _view(productive_all: int, spent_all: int, deep_sessions: int = 0) -> Status
         base_fun_minutes=0,
         productive_minutes=productive_all,
         level_bonus_minutes=0,
-        quest_bonus_minutes=0,
-        wheel_bonus_minutes=0,
         spent_fun_minutes=spent_all,
-        saved_fun_minutes=0,
     )
     return StatusView(
         today=PeriodTotals(0, 0),
@@ -35,6 +32,7 @@ def _view(productive_all: int, spent_all: int, deep_sessions: int = 0) -> Status
         deep_sessions_week=deep_sessions,
         daily_totals={},
         fun_earned_this_week=0,
+        last_week_productive_minutes=0,
         economy=economy,
     )
 

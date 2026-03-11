@@ -45,6 +45,7 @@ class StatusView:
     deep_sessions_week: int
     daily_totals: dict
     fun_earned_this_week: int
+    last_week_productive_minutes: int
     economy: EconomyBreakdown
 
 
@@ -179,20 +180,21 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
     # Daily totals for weekly chart
     daily = db.daily_totals(user_id, "productive", week.start.date(), week.end.date())
 
+    last_week_start = week.start - timedelta(days=7)
+    last_week_productive = db.sum_minutes(user_id, "productive", start=last_week_start, end=week.start)
+
     base_fun = db.sum_fun_earned_entries(user_id)
+    fun_adjustments = db.sum_fun_adjustments(user_id)
     fun_earned_this_week = db.sum_fun_earned_entries(user_id, start=week.start, end=week.end)
     level_bonus = db.sum_level_bonus(user_id)
 
     milestone_productive = all_productive - all_categories.get("job", 0)
 
     economy = build_economy(
-        base_fun_minutes=base_fun,
+        base_fun_minutes=base_fun + fun_adjustments,
         productive_minutes=milestone_productive,
         level_bonus_minutes=level_bonus,
-        quest_bonus_minutes=0,
-        wheel_bonus_minutes=0,
         spent_fun_minutes=all_spent,
-        saved_fun_minutes=0,
         tuning=tuning,
     )
 
@@ -216,5 +218,6 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         deep_sessions_week=db.count_deep_sessions(user_id, week.start, week.end),
         daily_totals=daily,
         fun_earned_this_week=fun_earned_this_week,
+        last_week_productive_minutes=last_week_productive,
         economy=economy,
     )
