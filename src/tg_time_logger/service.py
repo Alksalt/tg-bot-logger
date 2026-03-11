@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from tg_time_logger.db import Database, Entry, LevelUpEvent, Streak
 from tg_time_logger.gamification import (
@@ -15,7 +15,6 @@ from tg_time_logger.gamification import (
     level_progress,
     streak_multiplier,
 )
-from datetime import timedelta
 from tg_time_logger.time_utils import week_range_for
 
 
@@ -44,10 +43,7 @@ class StatusView:
     streak_longest: int
     streak_multiplier: float
     deep_sessions_week: int
-    active_quests: int
-    week_plan_done_minutes: int
-    week_plan_target_minutes: int
-    week_plan_remaining_minutes: int
+    daily_totals: dict
     fun_earned_this_week: int
     economy: EconomyBreakdown
 
@@ -179,20 +175,13 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
 
     streak = db.get_streak(user_id, now)
     streak_mult = streak_multiplier(streak.current_streak)
-    plan = db.get_plan_target(user_id, week.start.date())
-    plan_target = int(plan.total_target_minutes) if plan else 0
-    # Exclude job minutes from plan progress
-    week_job_minutes = week_categories.get("job", 0)
-    plan_done = max(0, int(week_productive) - week_job_minutes)
-    plan_remaining = max(plan_target - plan_done, 0)
+
+    # Daily totals for weekly chart
+    daily = db.daily_totals(user_id, "productive", week.start.date(), week.end.date())
 
     base_fun = db.sum_fun_earned_entries(user_id)
-    # Fun earned this week
     fun_earned_this_week = db.sum_fun_earned_entries(user_id, start=week.start, end=week.end)
     level_bonus = db.sum_level_bonus(user_id)
-    quest_bonus = db.sum_completed_quest_rewards(user_id)
-    wheel_bonus = db.sum_wheel_bonus(user_id)
-    saved = db.sum_saved_locked(user_id)
 
     milestone_productive = all_productive - all_categories.get("job", 0)
 
@@ -200,10 +189,10 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         base_fun_minutes=base_fun,
         productive_minutes=milestone_productive,
         level_bonus_minutes=level_bonus,
-        quest_bonus_minutes=quest_bonus,
-        wheel_bonus_minutes=wheel_bonus,
+        quest_bonus_minutes=0,
+        wheel_bonus_minutes=0,
         spent_fun_minutes=all_spent,
-        saved_fun_minutes=saved,
+        saved_fun_minutes=0,
         tuning=tuning,
     )
 
@@ -225,10 +214,7 @@ def compute_status(db: Database, user_id: int, now: datetime) -> StatusView:
         streak_longest=streak.longest_streak,
         streak_multiplier=streak_mult,
         deep_sessions_week=db.count_deep_sessions(user_id, week.start, week.end),
-        active_quests=len(db.list_active_quests(user_id, now)),
-        week_plan_done_minutes=plan_done,
-        week_plan_target_minutes=plan_target,
-        week_plan_remaining_minutes=plan_remaining,
+        daily_totals=daily,
         fun_earned_this_week=fun_earned_this_week,
         economy=economy,
     )

@@ -4,19 +4,11 @@ import sqlite3
 from datetime import date, datetime
 
 from tg_time_logger.db_models import (
-    CoachMemory,
-    CoachMessage,
     Entry,
     LevelUpEvent,
-    LlmUsage,
-    PlanTarget,
-    Quest,
-    SavingsGoal,
-    ShopItem,
     Streak,
     TimerSession,
-    TodoItem,
-    UserRule,
+    UserSettings,
 )
 
 
@@ -52,18 +44,6 @@ def _row_to_timer(row: sqlite3.Row) -> TimerSession:
     )
 
 
-def _row_to_plan(row: sqlite3.Row) -> PlanTarget:
-    return PlanTarget(
-        user_id=row["user_id"],
-        week_start_date=date.fromisoformat(row["week_start_date"]),
-        total_target_minutes=row["total_target_minutes"],
-        study_target_minutes=row["study_target_minutes"],
-        build_target_minutes=row["build_target_minutes"],
-        training_target_minutes=row["training_target_minutes"],
-        job_target_minutes=row["job_target_minutes"],
-    )
-
-
 def _row_to_level(row: sqlite3.Row) -> LevelUpEvent:
     return LevelUpEvent(
         id=row["id"],
@@ -81,120 +61,4 @@ def _row_to_streak(row: sqlite3.Row) -> Streak:
         longest_streak=int(row["longest_streak"]),
         last_productive_date=date.fromisoformat(row["last_productive_date"]) if row["last_productive_date"] else None,
         updated_at=datetime.fromisoformat(row["updated_at"]),
-    )
-
-
-def _row_to_quest(row: sqlite3.Row) -> Quest:
-    starts_raw = row["starts_at"] if "starts_at" in row.keys() and row["starts_at"] else row["created_at"]
-    duration_days = int(row["duration_days"]) if "duration_days" in row.keys() and row["duration_days"] is not None else 7
-    penalty = (
-        int(row["penalty_fun_minutes"])
-        if "penalty_fun_minutes" in row.keys() and row["penalty_fun_minutes"] is not None
-        else int(row["reward_fun_minutes"])
-    )
-    failed_at = datetime.fromisoformat(row["failed_at"]) if "failed_at" in row.keys() and row["failed_at"] else None
-    penalty_applied_at = (
-        datetime.fromisoformat(row["penalty_applied_at"])
-        if "penalty_applied_at" in row.keys() and row["penalty_applied_at"]
-        else None
-    )
-    source = str(row["source"]) if "source" in row.keys() and row["source"] else "legacy_auto"
-
-    return Quest(
-        id=row["id"],
-        user_id=row["user_id"],
-        title=row["title"],
-        description=row["description"],
-        quest_type=row["quest_type"],
-        difficulty=row["difficulty"],
-        duration_days=duration_days,
-        reward_fun_minutes=row["reward_fun_minutes"],
-        penalty_fun_minutes=penalty,
-        condition_json=row["condition_json"],
-        status=row["status"],
-        starts_at=datetime.fromisoformat(starts_raw),
-        expires_at=datetime.fromisoformat(row["expires_at"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-        failed_at=failed_at,
-        penalty_applied_at=penalty_applied_at,
-        created_at=datetime.fromisoformat(row["created_at"]),
-        source=source,
-    )
-
-
-def _row_to_shop_item(row: sqlite3.Row) -> ShopItem:
-    return ShopItem(
-        id=row["id"],
-        user_id=row["user_id"],
-        name=row["name"],
-        emoji=row["emoji"] or "\U0001f381",
-        cost_fun_minutes=row["cost_fun_minutes"],
-        nok_value=row["nok_value"],
-        active=bool(row["active"]),
-    )
-
-
-def _row_to_savings(row: sqlite3.Row) -> SavingsGoal:
-    return SavingsGoal(
-        id=row["id"],
-        user_id=row["user_id"],
-        name=row["name"],
-        target_fun_minutes=row["target_fun_minutes"],
-        saved_fun_minutes=row["saved_fun_minutes"],
-        status=row["status"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-    )
-
-
-def _row_to_llm_usage(row: sqlite3.Row) -> LlmUsage:
-    return LlmUsage(
-        user_id=row["user_id"],
-        day_key=row["day_key"],
-        request_count=int(row["request_count"]),
-        last_request_at=datetime.fromisoformat(row["last_request_at"]) if row["last_request_at"] else None,
-    )
-
-
-def _row_to_user_rule(row: sqlite3.Row) -> UserRule:
-    return UserRule(
-        id=int(row["id"]),
-        user_id=int(row["user_id"]),
-        rule_text=str(row["rule_text"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _row_to_coach_message(row: sqlite3.Row) -> CoachMessage:
-    return CoachMessage(
-        id=int(row["id"]),
-        user_id=int(row["user_id"]),
-        role=str(row["role"]),
-        content=str(row["content"]),
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _row_to_coach_memory(row: sqlite3.Row) -> CoachMemory:
-    return CoachMemory(
-        id=int(row["id"]),
-        user_id=int(row["user_id"]),
-        category=str(row["category"]),
-        content=str(row["content"]),
-        tags=row["tags"],
-        created_at=datetime.fromisoformat(row["created_at"]),
-    )
-
-
-def _row_to_todo(row: sqlite3.Row) -> TodoItem:
-    return TodoItem(
-        id=int(row["id"]),
-        user_id=int(row["user_id"]),
-        plan_date=str(row["plan_date"]),
-        title=str(row["title"]),
-        duration_minutes=int(row["duration_minutes"]) if row["duration_minutes"] is not None else None,
-        status=str(row["status"]),
-        position=int(row["position"]),
-        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
-        created_at=datetime.fromisoformat(row["created_at"]),
     )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import random
 from dataclasses import dataclass
 
 PRODUCTIVE_CATEGORIES = ("study", "build", "training", "job")
@@ -239,17 +238,6 @@ def build_economy(
         saved_fun_minutes=max(0, saved_fun_minutes),
         remaining_fun_minutes=remaining,
     )
-
-
-def spin_wheel() -> tuple[str, int]:
-    roll = random.random()
-    if roll < 0.50:
-        return "🎰 Small win!", 30
-    if roll < 0.80:
-        return "🎰 Medium win!", 60
-    if roll < 0.95:
-        return "🎰 Big win!", 120
-    return "🎰🎰🎰 JACKPOT!", 300
 
 
 LEVEL_BONUS_MILESTONES = {

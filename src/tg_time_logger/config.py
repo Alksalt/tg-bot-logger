@@ -4,38 +4,15 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from tg_time_logger.llm_router import LlmRoute, load_router_config, resolve_route
-
 
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
     database_path: Path
     tz: str
-    llm_enabled: bool
-    llm_provider: str
-    llm_model: str
-    llm_api_key: str | None
-    llm_router_config_path: Path
     admin_panel_token: str | None
     admin_host: str
     admin_port: int
-    openrouter_api_key: str | None
-    openai_api_key: str | None
-    google_api_key: str | None
-    anthropic_api_key: str | None
-    brave_search_api_key: str | None
-    tavily_api_key: str | None
-    serper_api_key: str | None
-    agent_models_path: Path
-    agent_directive_path: Path
-    notion_api_key: str | None
-    notion_database_id: str | None
-    notion_backup_dir: Path
-    notion_backend: str
-    notion_mcp_url: str | None
-    notion_mcp_auth_token: str | None
-    notion_mcp_tool_name: str
 
 
 def _load_env_file(path: Path) -> None:
@@ -52,12 +29,6 @@ def _load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
-def _parse_bool(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def load_settings() -> Settings:
     _load_env_file(Path(".env"))
 
@@ -67,15 +38,6 @@ def load_settings() -> Settings:
 
     db_path = Path(os.getenv("DATABASE_PATH", "./data/app.db"))
     tz = os.getenv("TZ", "Europe/Oslo")
-    llm_enabled = _parse_bool(os.getenv("LLM_ENABLED", "0"), default=False)
-    router_path = Path(os.getenv("LLM_ROUTER_CONFIG", "./llm_router.yaml"))
-    router_cfg = load_router_config(router_path)
-    route: LlmRoute = resolve_route(
-        config=router_cfg,
-        provider_override=os.getenv("LLM_PROVIDER"),
-        model_override=os.getenv("OPENAI_MODEL") or os.getenv("LLM_MODEL"),
-        env_getter=os.getenv,
-    )
     admin_port_raw = os.getenv("ADMIN_PORT", "8080")
     try:
         admin_port = int(admin_port_raw)
@@ -86,28 +48,7 @@ def load_settings() -> Settings:
         telegram_bot_token=token,
         database_path=db_path,
         tz=tz,
-        llm_enabled=llm_enabled,
-        llm_provider=route.provider,
-        llm_model=route.model,
-        llm_api_key=route.api_key,
-        llm_router_config_path=router_path,
         admin_panel_token=os.getenv("ADMIN_PANEL_TOKEN"),
         admin_host=os.getenv("ADMIN_HOST", "127.0.0.1"),
         admin_port=admin_port,
-        openrouter_api_key=os.getenv("OPENROUTER_API_KEY"),
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        google_api_key=os.getenv("GOOGLE_API_KEY"),
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-        brave_search_api_key=os.getenv("BRAVE_SEARCH_API_KEY"),
-        tavily_api_key=os.getenv("TAVILY_API_KEY"),
-        serper_api_key=os.getenv("SERPER_API_KEY"),
-        agent_models_path=Path(os.getenv("AGENT_MODELS_PATH", "./agents/models.yaml")),
-        agent_directive_path=Path(os.getenv("AGENT_DIRECTIVE_PATH", "./agents/directives/llm_assistant.md")),
-        notion_api_key=os.getenv("NOTION_API_KEY"),
-        notion_database_id=os.getenv("NOTION_DATABASE_ID"),
-        notion_backup_dir=Path(os.getenv("NOTION_BACKUP_DIR", "./data/notion_backups")),
-        notion_backend=(os.getenv("NOTION_BACKEND", "api") or "api").strip().lower(),
-        notion_mcp_url=os.getenv("NOTION_MCP_URL"),
-        notion_mcp_auth_token=os.getenv("NOTION_MCP_AUTH_TOKEN"),
-        notion_mcp_tool_name=(os.getenv("NOTION_MCP_TOOL_NAME", "notion-create-pages") or "notion-create-pages").strip(),
     )

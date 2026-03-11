@@ -24,12 +24,12 @@ def test_feature_and_job_toggle(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
     db.set_app_config(
         {
-            "feature.quests_enabled": False,
+            "feature.economy_enabled": False,
             "job.reminders_enabled": False,
         },
         actor="test",
     )
-    assert db.is_feature_enabled("quests") is False
+    assert db.is_feature_enabled("economy") is False
     assert db.is_job_enabled("reminders") is False
 
 
@@ -61,38 +61,11 @@ def test_tuning_changes_fun_and_milestone(tmp_path) -> None:
 
 def test_snapshot_restore(tmp_path) -> None:
     db = Database(tmp_path / "app.db")
-    db.set_app_config({"feature.llm_enabled": False}, actor="test")
+    db.set_app_config({"feature.reminders_enabled": False}, actor="test")
     sid = db.create_config_snapshot(actor="test")
-    db.set_app_config({"feature.llm_enabled": True}, actor="test")
-    assert db.is_feature_enabled("llm") is True
+    db.set_app_config({"feature.reminders_enabled": True}, actor="test")
+    assert db.is_feature_enabled("reminders") is True
     assert db.restore_config_snapshot(sid, actor="test") is True
-    assert db.is_feature_enabled("llm") is False
+    assert db.is_feature_enabled("reminders") is False
 
 
-def test_search_provider_stats_counter(tmp_path) -> None:
-    db = Database(tmp_path / "app.db")
-    now = _dt(2026, 2, 11)
-    db.record_search_provider_event(
-        provider="brave",
-        now=now,
-        success=True,
-        cached=False,
-        rate_limited=False,
-    )
-    db.record_search_provider_event(
-        provider="brave",
-        now=now,
-        success=False,
-        cached=False,
-        rate_limited=True,
-        status_code=429,
-        error="HTTP 429",
-    )
-    rows = db.list_search_provider_stats()
-    assert rows
-    row = rows[0]
-    assert row["provider"] == "brave"
-    assert int(row["request_count"]) == 2
-    assert int(row["success_count"]) == 1
-    assert int(row["fail_count"]) == 1
-    assert int(row["rate_limit_count"]) == 1

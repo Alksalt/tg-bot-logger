@@ -12,8 +12,8 @@ from tg_time_logger.help_guides import (
 )
 
 ALL_COMMANDS = [
-    "log", "spend", "status", "undo", "plan", "start", "timer", "stop",
-    "quests", "shop", "notes", "llm", "settings", "todo", "help",
+    "log", "spend", "status", "undo", "start", "timer", "stop",
+    "settings", "help",
 ]
 
 
@@ -49,7 +49,7 @@ def test_no_empty_pages() -> None:
 
 
 def test_guide_topic_count() -> None:
-    assert len(GUIDE_PAGES) == 7
+    assert len(GUIDE_PAGES) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -58,26 +58,26 @@ def test_guide_topic_count() -> None:
 
 
 def test_get_guide_page_valid() -> None:
-    text, total = get_guide_page("llm", 1)
+    text, total = get_guide_page("time_tracking", 1)
     assert text is not None
-    assert total >= 3
+    assert total >= 1
 
 
 def test_get_guide_page_last() -> None:
-    pages = GUIDE_PAGES["llm"]
-    text, total = get_guide_page("llm", len(pages))
+    pages = GUIDE_PAGES["time_tracking"]
+    text, total = get_guide_page("time_tracking", len(pages))
     assert text is not None
     assert total == len(pages)
 
 
 def test_get_guide_page_out_of_range() -> None:
-    text, total = get_guide_page("llm", 999)
+    text, total = get_guide_page("time_tracking", 999)
     assert text is None
     assert total > 0
 
 
 def test_get_guide_page_zero() -> None:
-    text, total = get_guide_page("llm", 0)
+    text, total = get_guide_page("time_tracking", 0)
     assert text is None
 
 
@@ -90,30 +90,25 @@ def test_get_guide_page_invalid_topic() -> None:
 def test_list_guide_topics_sorted() -> None:
     topics = list_guide_topics()
     assert topics == sorted(topics)
-    assert len(topics) == 7
+    assert len(topics) == 5
 
 
 def test_resolve_guide_topic_direct() -> None:
-    assert resolve_guide_topic("llm") == "llm"
-    assert resolve_guide_topic("quests") == "quests"
-    assert resolve_guide_topic("shop") == "shop"
-    assert resolve_guide_topic("notes") == "notes"
+    assert resolve_guide_topic("settings") == "settings"
 
 
 def test_resolve_guide_topic_aliases() -> None:
-    assert resolve_guide_topic("economy") == "shop"
-    assert resolve_guide_topic("timer") == "logging"
-    assert resolve_guide_topic("coach") == "llm"
-    assert resolve_guide_topic("ai") == "llm"
-    assert resolve_guide_topic("savings") == "shop"
-    assert resolve_guide_topic("language") == "settings"
-    assert resolve_guide_topic("rules") == "notes"
-    assert resolve_guide_topic("freeze") == "shop"
+    assert resolve_guide_topic("timer") == "time_tracking"
+    assert resolve_guide_topic("reminders") == "settings"
+    assert resolve_guide_topic("log") == "time_tracking"
+    assert resolve_guide_topic("spend") == "time_tracking"
+    assert resolve_guide_topic("economy") == "economy"
+    assert resolve_guide_topic("xp") == "leveling"
+    assert resolve_guide_topic("streak") == "leveling"
 
 
 def test_resolve_guide_topic_strips_slash() -> None:
-    assert resolve_guide_topic("/llm") == "llm"
-    assert resolve_guide_topic("/log") == "logging"
+    assert resolve_guide_topic("/log") == "time_tracking"
 
 
 def test_resolve_guide_topic_unknown() -> None:
@@ -131,7 +126,7 @@ def test_all_commands_have_descriptions() -> None:
 
 
 def test_all_commands_have_help_topics() -> None:
-    """Every command except 'overview' key should have a HELP_TOPICS entry."""
+    """Every command should have a HELP_TOPICS entry."""
     for cmd in ALL_COMMANDS:
         assert cmd in HELP_TOPICS, f"Missing HELP_TOPICS entry for '/{cmd}'"
 

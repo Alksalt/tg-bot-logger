@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Protocol
 
 from tg_time_logger.db_constants import APP_CONFIG_DEFAULTS, JOB_CONFIG_KEYS
@@ -183,37 +183,6 @@ class SystemMixin:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_last_user_llm_audit(self: DbProtocol, user_id: int) -> dict[str, Any] | None:
-        actor = f"user:{user_id}"
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT action, payload_json, created_at
-                FROM admin_audit_log
-                WHERE actor = ?
-                  AND action IN ('agent.run', 'agent.chat', 'agent.direct')
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (actor,),
-            ).fetchone()
-        if row is None:
-            return None
-        payload: dict[str, Any] = {}
-        raw = row["payload_json"]
-        if isinstance(raw, str) and raw.strip():
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                parsed = {}
-            if isinstance(parsed, dict):
-                payload = parsed
-        return {
-            "action": str(row["action"]),
-            "created_at": str(row["created_at"]),
-            "payload": payload,
-        }
-
     def add_admin_audit(
         self: DbProtocol,
         *,
@@ -237,108 +206,6 @@ class SystemMixin:
                     created_at.isoformat(),
                 ),
             )
-
-    def get_tool_cache(self: DbProtocol, tool_name: str, cache_key: str, now: datetime) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT response_json, expires_at
-                FROM tool_cache
-                WHERE tool_name = ? AND cache_key = ?
-                """,
-                (tool_name, cache_key),
-            ).fetchone()
-        if row is None:
-            return None
-        expires_at = datetime.fromisoformat(str(row["expires_at"]))
-        if expires_at <= now:
-            return None
-        try:
-            payload = json.loads(str(row["response_json"]))
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(payload, dict):
-            return None
-        return payload
-
-    def set_tool_cache(self: DbProtocol, tool_name: str, cache_key: str, payload: dict[str, Any], fetched_at: datetime, ttl_seconds: int) -> None:
-        expires_at = fetched_at + timedelta(seconds=max(1, ttl_seconds))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO tool_cache(tool_name, cache_key, response_json, fetched_at, expires_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(tool_name, cache_key) DO UPDATE SET
-                    response_json=excluded.response_json,
-                    fetched_at=excluded.fetched_at,
-                    expires_at=excluded.expires_at
-                """,
-                (
-                    tool_name,
-                    cache_key,
-                    json.dumps(payload),
-                    fetched_at.isoformat(),
-                    expires_at.isoformat(),
-                ),
-            )
-
-    def record_search_provider_event(
-        self: DbProtocol,
-        *,
-        provider: str,
-        now: datetime,
-        success: bool,
-        cached: bool,
-        rate_limited: bool,
-        status_code: int | None = None,
-        error: str | None = None,
-    ) -> None:
-        p = provider.strip().lower()
-        if not p:
-            return
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO search_provider_stats(
-                    provider, request_count, success_count, fail_count, cache_hit_count,
-                    rate_limit_count, last_status_code, last_error, last_request_at, updated_at
-                )
-                VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(provider) DO UPDATE SET
-                    request_count = request_count + 1,
-                    success_count = success_count + excluded.success_count,
-                    fail_count = fail_count + excluded.fail_count,
-                    cache_hit_count = cache_hit_count + excluded.cache_hit_count,
-                    rate_limit_count = rate_limit_count + excluded.rate_limit_count,
-                    last_status_code = excluded.last_status_code,
-                    last_error = excluded.last_error,
-                    last_request_at = excluded.last_request_at,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    p,
-                    1 if success else 0,
-                    0 if success else 1,
-                    1 if cached else 0,
-                    1 if rate_limited else 0,
-                    status_code,
-                    error,
-                    now.isoformat(),
-                    now.isoformat(),
-                ),
-            )
-
-    def list_search_provider_stats(self: DbProtocol) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT provider, request_count, success_count, fail_count, cache_hit_count,
-                       rate_limit_count, last_status_code, last_error, last_request_at, updated_at
-                FROM search_provider_stats
-                ORDER BY provider ASC
-                """
-            ).fetchall()
-        return [dict(r) for r in rows]
 
     def was_event_sent(self: DbProtocol, user_id: int, event_key: str) -> bool:
         with self._connect() as conn:

@@ -1,40 +1,24 @@
 from __future__ import annotations
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from tg_time_logger.config import Settings
 from tg_time_logger.db import Database
-from tg_time_logger.i18n import normalize_language_code
-from tg_time_logger.llm_messages import LlmContext, level_up_message
-from tg_time_logger.llm_router import LlmRoute
+from tg_time_logger.gamification import get_title
 
 
-def build_keyboard(*, timer_running: bool = False) -> InlineKeyboardMarkup:
+def build_keyboard(*, timer_running: bool = False) -> ReplyKeyboardMarkup:
     if timer_running:
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏹ Stop Timer", callback_data="timer:stop")],
-        ])
+        return ReplyKeyboardMarkup(
+            [[KeyboardButton("\u23f9 Stop Timer")]],
+            resize_keyboard=True,
+        )
     rows = [
-        [
-            InlineKeyboardButton("+15m Study", callback_data="log:study:15"),
-            InlineKeyboardButton("+30m Build", callback_data="log:build:30"),
-            InlineKeyboardButton("+30m Training", callback_data="log:training:30"),
-        ],
-        [
-            InlineKeyboardButton("+60m Build", callback_data="log:build:60"),
-            InlineKeyboardButton("-15m Fun", callback_data="spend:15"),
-            InlineKeyboardButton("-30m Fun", callback_data="spend:30"),
-        ],
-        [
-            InlineKeyboardButton("-60m Fun", callback_data="spend:60"),
-            InlineKeyboardButton("Status", callback_data="status"),
-        ],
-        [
-            InlineKeyboardButton("Undo last", callback_data="undo"),
-        ],
+        [KeyboardButton("Log"), KeyboardButton("Spend"), KeyboardButton("Timer")],
+        [KeyboardButton("Status"), KeyboardButton("Undo")],
     ]
-    return InlineKeyboardMarkup(rows)
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def get_db(context: ContextTypes.DEFAULT_TYPE) -> Database:
@@ -47,25 +31,6 @@ def get_settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
     settings = context.application.bot_data.get("settings")
     assert isinstance(settings, Settings)
     return settings
-
-
-def get_user_language(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
-    db = get_db(context)
-    default_lang = str(db.get_app_config_value("i18n.default_language") or "en")
-    return normalize_language_code(db.get_settings(user_id).language_code, default=default_lang)
-
-
-def llm_context(context: ContextTypes.DEFAULT_TYPE) -> LlmContext:
-    settings = get_settings(context)
-    db = get_db(context)
-    return LlmContext(
-        enabled=settings.llm_enabled and db.is_feature_enabled("llm"),
-        route=LlmRoute(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            api_key=settings.llm_api_key,
-        ),
-    )
 
 
 def touch_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[int, int, object]:
@@ -97,12 +62,10 @@ async def send_level_ups(
         return
 
     for lvl_event in level_ups:
-        text = level_up_message(
-            llm_context(context),
-            level=lvl_event.level,
-            total_hours=total_productive_minutes / 60,
-            bonus=lvl_event.bonus_fun_minutes,
-            xp_remaining=xp_remaining,
-            top_category=top_category,
+        title = get_title(lvl_event.level)
+        text = (
+            f"\u2b50 Level {lvl_event.level} \u2014 {title}!\n"
+            f"Bonus: +{lvl_event.bonus_fun_minutes}m fun\n"
+            f"Total: {total_productive_minutes // 60}h productive"
         )
         await msg.reply_text(text)

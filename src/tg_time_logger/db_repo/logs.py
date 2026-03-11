@@ -4,8 +4,8 @@ import sqlite3
 from datetime import datetime
 from typing import Any, Protocol
 
-from tg_time_logger.db_converters import _row_to_entry, _row_to_llm_usage, _row_to_timer
-from tg_time_logger.db_models import Entry, LlmUsage, TimerSession
+from tg_time_logger.db_converters import _row_to_entry, _row_to_timer
+from tg_time_logger.db_models import Entry, TimerSession
 from tg_time_logger.gamification import PRODUCTIVE_CATEGORIES, fun_from_minutes
 
 
@@ -358,38 +358,3 @@ class LogMixin:
                 return 0
             start_dt = datetime.fromisoformat(str(row["started_at"]))
             return int((now - start_dt).total_seconds() / 60)
-
-    def get_llm_usage(self: DbProtocol, user_id: int, day_key: str) -> LlmUsage:
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO llm_usage(user_id, day_key, request_count, last_request_at) VALUES (?, ?, 0, NULL)",
-                (user_id, day_key),
-            )
-            row = conn.execute(
-                "SELECT user_id, day_key, request_count, last_request_at FROM llm_usage WHERE user_id = ? AND day_key = ?",
-                (user_id, day_key),
-            ).fetchone()
-        assert row is not None
-        return _row_to_llm_usage(row)
-
-    def increment_llm_usage(self: DbProtocol, user_id: int, day_key: str, now: datetime) -> LlmUsage:
-        with self._connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO llm_usage(user_id, day_key, request_count, last_request_at) VALUES (?, ?, 0, NULL)",
-                (user_id, day_key),
-            )
-            conn.execute(
-                """
-                UPDATE llm_usage
-                SET request_count = request_count + 1,
-                last_request_at = ?
-                WHERE user_id = ? AND day_key = ?
-                """,
-                (now.isoformat(), user_id, day_key),
-            )
-            row = conn.execute(
-                "SELECT user_id, day_key, request_count, last_request_at FROM llm_usage WHERE user_id = ? AND day_key = ?",
-                (user_id, day_key),
-            ).fetchone()
-        assert row is not None
-        return _row_to_llm_usage(row)
