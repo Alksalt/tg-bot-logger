@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from tg_time_logger.db import Database
+from tg_time_logger.duration import parse_duration_to_minutes
 from tg_time_logger.gamification import level_up_bonus_minutes
 
 
@@ -72,3 +73,27 @@ def test_set_user_level_to_one_clears_all(tmp_path):
 
     db.set_user_level(1, 1, now)
     assert len(db.list_level_up_events(1)) == 0
+
+
+def test_update_daily_goal(tmp_path):
+    db = Database(tmp_path / "app.db")
+    db.get_settings(1)  # ensure row exists
+    db.update_daily_goal(1, 120)
+    settings = db.get_settings(1)
+    assert settings.daily_goal_minutes == 120
+
+
+def test_settings_goal_duration_parsing():
+    """Verify parse_duration_to_minutes handles the formats we advertise."""
+    assert parse_duration_to_minutes("2h") == 120
+    assert parse_duration_to_minutes("90m") == 90
+    assert parse_duration_to_minutes("1h30m") == 90
+
+
+def test_settings_goal_persists(tmp_path):
+    """Full flow: parse duration, update DB, read back."""
+    db = Database(tmp_path / "app.db")
+    db.get_settings(1)
+    minutes = parse_duration_to_minutes("2h")
+    db.update_daily_goal(1, minutes)
+    assert db.get_settings(1).daily_goal_minutes == 120

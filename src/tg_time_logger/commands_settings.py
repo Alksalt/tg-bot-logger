@@ -4,6 +4,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 
 from tg_time_logger.commands_shared import get_db, touch_user
+from tg_time_logger.duration import DurationParseError, parse_duration_to_minutes
 
 
 async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -14,14 +15,17 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         user_settings = db.get_settings(user_id)
         reminders = "on" if user_settings.reminders_enabled else "off"
         quiet = user_settings.quiet_hours or "not set"
+        goal = f"{user_settings.daily_goal_minutes}m"
         await update.effective_message.reply_text(
             (
                 f"Settings:\n"
                 f"  Reminders: {reminders}\n"
-                f"  Quiet hours: {quiet}\n\n"
+                f"  Quiet hours: {quiet}\n"
+                f"  Daily goal: {goal}\n\n"
                 "Change with:\n"
                 "  /settings reminders <on|off>\n"
                 "  /settings quiet <HH:MM-HH:MM>\n"
+                "  /settings goal <duration>\n"
                 "  /settings unspend <amount>"
             )
         )
@@ -56,6 +60,20 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.effective_message.reply_text(f"Quiet hours set to {raw}")
         return
 
+    # --- goal ---
+    if action == "goal":
+        if len(context.args) < 2:
+            await update.effective_message.reply_text("Usage: /settings goal <duration>\nExample: /settings goal 2h")
+            return
+        try:
+            minutes = parse_duration_to_minutes(context.args[1])
+        except DurationParseError:
+            await update.effective_message.reply_text("Invalid duration. Examples: 2h, 90m, 1h30m")
+            return
+        db.update_daily_goal(user_id, minutes)
+        await update.effective_message.reply_text(f"Daily goal set to {minutes}m")
+        return
+
     # --- unspend ---
     if action == "unspend":
         if len(context.args) < 2:
@@ -84,7 +102,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     await update.effective_message.reply_text(
-        "/settings usage: reminders | quiet | unspend"
+        "/settings usage: reminders | quiet | goal | unspend"
     )
 
 

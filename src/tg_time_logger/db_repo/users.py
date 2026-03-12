@@ -72,3 +72,11 @@ class UserMixin:
                 "UPDATE user_settings SET quiet_hours = ? WHERE user_id = ?",
                 (quiet_hours, user_id),
             )
+
+    def update_daily_goal(self: DbProtocol, user_id: int, minutes: int) -> None:
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO user_settings(user_id) VALUES (?)", (user_id,))
+            conn.execute(
+                "UPDATE user_settings SET daily_goal_minutes = ? WHERE user_id = ?",
+                (minutes, user_id),
+            )

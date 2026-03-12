@@ -13,7 +13,7 @@ COMMAND_DESCRIPTIONS: dict[str, str] = {
     "status": "Show level, XP, streak, economy summary",
     "undo": "Undo your last log entry",
     "help": "Show help or detailed command docs",
-    "settings": "Reminders, quiet hours, unspend",
+    "settings": "Reminders, quiet hours, daily goal, unspend",
 }
 
 
@@ -72,6 +72,7 @@ HELP_TOPICS: dict[str, str] = {
         "/settings -- show all current settings\n"
         "/settings reminders <on|off> -- toggle reminders\n"
         "/settings quiet <HH:MM-HH:MM> -- set quiet hours\n"
+        "/settings goal <duration> -- set daily goal (2h, 90m)\n"
         "/settings unspend <amount> -- deduct fun minutes"
     ),
     "help": (
@@ -107,6 +108,7 @@ TOPIC_ALIASES: dict[str, str] = {
     "reminders": "settings",
     "quiet_hours": "settings",
     "unspend": "settings",
+    "goal": "settings",
 }
 
 
@@ -276,7 +278,7 @@ _LEVELING_PAGES: list[str] = [
         "  Deep work bonus   -- timer sessions 60+ minutes\n"
         "\n"
         "Level-up rewards:\n"
-        "  Each level grants a fun minute bonus (40% scaling).\n"
+        "  Each level grants a fun minute bonus (20 + 15 per level).\n"
         "  Higher levels unlock new titles.\n"
         "\n"
         "Note: job category earns fun minutes but no XP."
@@ -317,6 +319,10 @@ _SETTINGS_PAGES: list[str] = [
         "Quiet hours (no reminders during this window):\n"
         "  /settings quiet 22:00-08:00\n"
         "  /settings quiet 23:00-07:00\n"
+        "\n"
+        "Daily goal:\n"
+        "  /settings goal 2h         Set daily goal to 2 hours\n"
+        "  /settings goal 90m        Set daily goal to 90 minutes\n"
         "\n"
         "Unspend (manual fun-minute deduction):\n"
         "  /settings unspend 30\n"
