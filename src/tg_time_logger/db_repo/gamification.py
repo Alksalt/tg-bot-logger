@@ -196,6 +196,35 @@ class GamificationMixin:
             total += level_up_bonus_minutes(int(row["level"]), tuning=tuning)
         return total
 
+    def recalculate_level_bonuses(self: DbProtocol, user_id: int) -> int:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, level FROM level_up_events WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+            count = 0
+            for row in rows:
+                new_bonus = level_up_bonus_minutes(int(row["level"]))
+                conn.execute(
+                    "UPDATE level_up_events SET bonus_fun_minutes = ? WHERE id = ?",
+                    (new_bonus, row["id"]),
+                )
+                count += 1
+        return count
+
+    def set_user_level(self: DbProtocol, user_id: int, target_level: int, now: datetime) -> int:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM level_up_events WHERE user_id = ?", (user_id,))
+            count = 0
+            for lvl in range(2, target_level + 1):
+                bonus = level_up_bonus_minutes(lvl)
+                conn.execute(
+                    "INSERT INTO level_up_events(user_id, level, bonus_fun_minutes, created_at) VALUES (?, ?, ?, ?)",
+                    (user_id, lvl, bonus, now.isoformat()),
+                )
+                count += 1
+        return count
+
     def count_deep_sessions(self: DbProtocol, user_id: int, start: datetime, end: datetime, minimum_minutes: int = 90) -> int:
         with self._connect() as conn:
             row = conn.execute(
