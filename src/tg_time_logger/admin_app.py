@@ -436,7 +436,7 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
             "level_bonus": level_bonus,
             "milestone_bonus": economy.milestone_bonus_minutes,
             "total_spent": all_spent,
-            "fun_balance": economy.available_fun_minutes,
+            "fun_balance": economy.remaining_fun_minutes,
             "total_productive": all_productive,
         }
 
