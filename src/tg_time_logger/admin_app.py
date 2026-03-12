@@ -57,6 +57,10 @@ class FunAdjustmentRequest(BaseModel):
     note: str = ""
 
 
+class SetLevelRequest(BaseModel):
+    level: int = Field(ge=1, le=50)
+
+
 def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     app = FastAPI(title="TG Time Logger Admin", version="1.0.0")
 
@@ -481,6 +485,30 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
         db.reset_streak(user_id, now)
         db.add_admin_audit(actor="admin", action="reset_streak", target=str(user_id), payload=None, created_at=now)
         return {"ok": True}
+
+    # --- Level Management ---
+
+    @app.post("/api/recalculate-level-bonuses")
+    async def api_recalculate_level_bonuses(request: Request) -> dict[str, Any]:
+        _require_auth(request, admin_token)
+        now = datetime.utcnow()
+        results = []
+        user_ids = db.get_distinct_level_up_user_ids()
+        for uid in user_ids:
+            count = db.recalculate_level_bonuses(uid)
+            if count > 0:
+                results.append({"user_id": uid, "updated": count})
+        total = sum(r["updated"] for r in results)
+        db.add_admin_audit(actor="admin", action="recalculate_level_bonuses", target="all", payload={"total": total}, created_at=now)
+        return {"ok": True, "total_updated": total, "users": results}
+
+    @app.post("/api/user/{user_id}/set-level")
+    async def api_set_level(user_id: int, request: Request, payload: SetLevelRequest) -> dict[str, Any]:
+        _require_auth(request, admin_token)
+        now = datetime.utcnow()
+        count = db.set_user_level(user_id, payload.level, now)
+        db.add_admin_audit(actor="admin", action="set_level", target=str(user_id), payload={"level": payload.level}, created_at=now)
+        return {"ok": True, "events_created": count, "level": payload.level}
 
     return app
 

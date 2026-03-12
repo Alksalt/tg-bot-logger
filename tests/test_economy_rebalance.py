@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from fastapi.testclient import TestClient
+
+from tg_time_logger.admin_app import build_admin_app
 from tg_time_logger.db import Database
 from tg_time_logger.duration import parse_duration_to_minutes
 from tg_time_logger.gamification import level_up_bonus_minutes
@@ -97,3 +100,50 @@ def test_settings_goal_persists(tmp_path):
     minutes = parse_duration_to_minutes("2h")
     db.update_daily_goal(1, minutes)
     assert db.get_settings(1).daily_goal_minutes == 120
+
+
+def test_admin_recalculate_endpoint(tmp_path):
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 12)
+
+    # Insert events with stale bonus values
+    with db._connect() as conn:
+        conn.execute(
+            "INSERT INTO level_up_events(user_id, level, bonus_fun_minutes, created_at) VALUES (?, ?, ?, ?)",
+            (1, 2, 999, now.isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO level_up_events(user_id, level, bonus_fun_minutes, created_at) VALUES (?, ?, ?, ?)",
+            (1, 3, 888, now.isoformat()),
+        )
+
+    app = build_admin_app(db, admin_token=None)
+    client = TestClient(app)
+
+    resp = client.post("/api/recalculate-level-bonuses")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_updated"] == 2
+    assert data["users"][0]["user_id"] == 1
+
+    events = db.list_level_up_events(1)
+    assert events[0].bonus_fun_minutes == 50
+    assert events[1].bonus_fun_minutes == 65
+
+
+def test_admin_set_level_endpoint(tmp_path):
+    db = Database(tmp_path / "app.db")
+    now = _dt(2026, 3, 12)
+    db.add_level_up_event(1, 2, now)
+
+    app = build_admin_app(db, admin_token=None)
+    client = TestClient(app)
+
+    resp = client.post("/api/user/1/set-level", json={"level": 5})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["events_created"] == 4
+
+    events = db.list_level_up_events(1)
+    assert len(events) == 4
+    assert [e.level for e in events] == [2, 3, 4, 5]

@@ -196,6 +196,13 @@ class GamificationMixin:
             total += level_up_bonus_minutes(int(row["level"]), tuning=tuning)
         return total
 
+    def get_distinct_level_up_user_ids(self: DbProtocol) -> list[int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT user_id FROM level_up_events ORDER BY user_id ASC"
+            ).fetchall()
+        return [int(row["user_id"]) for row in rows]
+
     def recalculate_level_bonuses(self: DbProtocol, user_id: int) -> int:
         with self._connect() as conn:
             rows = conn.execute(
