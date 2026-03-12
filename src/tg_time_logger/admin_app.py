@@ -115,6 +115,7 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     <div class="row">
       <button id="saveBtn">Save Config</button>
       <button id="snapshotBtn" class="secondary">Create Snapshot</button>
+      <button id="recalcBtn" class="secondary">Recalculate Level Bonuses</button>
     </div>
   </div>
 
@@ -149,6 +150,12 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
         <button id="resetStreakBtn" class="secondary">Reset Streak</button>
       </div>
 
+      <h3 style="margin-top:12px">Set Level</h3>
+      <div class="row" style="margin-bottom:12px">
+        <input type="number" id="setLevelInput" placeholder="Target level" min="1" max="50" />
+        <button id="setLevelBtn" class="secondary">Set Level</button>
+      </div>
+
       <h3 style="margin-top:12px">Level-Up Events</h3>
       <table id="levelUps" style="width:100%;font-size:13px;border-collapse:collapse">
         <thead><tr><th>ID</th><th>Level</th><th>Bonus Fun</th><th>Date</th><th></th></tr></thead>
@@ -179,7 +186,7 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     const economyKeys = [
       "economy.fun_rate.study", "economy.fun_rate.build", "economy.fun_rate.training", "economy.fun_rate.job",
       "economy.milestone_block_minutes", "economy.milestone_bonus_minutes",
-      "economy.xp_level2_base", "economy.xp_linear", "economy.xp_quadratic", "economy.level_bonus_scale_percent"
+      "economy.xp_level2_base", "economy.xp_linear", "economy.xp_quadratic"
     ];
 
     const state = {};
@@ -349,6 +356,28 @@ def build_admin_app(db: Database, admin_token: str | None) -> FastAPI:
     document.getElementById("resetStreakBtn").addEventListener("click", async () => {
       if (!currentUserId || !confirm("Reset streak to 0?")) return;
       await fetch(withToken(`/api/user/${currentUserId}/streak/reset`), {method:"POST", headers:{"content-type":"application/json"}, body:"{}"});
+      await loadUserData();
+    });
+
+    document.getElementById("recalcBtn").addEventListener("click", async () => {
+      if (!confirm("Recalculate all level-up bonuses with the current formula?")) return;
+      const res = await fetch(withToken("/api/recalculate-level-bonuses"), {
+        method: "POST", headers: {"content-type": "application/json"}, body: "{}"
+      });
+      const data = await res.json();
+      alert(`Updated ${data.total_updated} events`);
+      if (currentUserId) await loadUserData();
+    });
+
+    document.getElementById("setLevelBtn").addEventListener("click", async () => {
+      const level = parseInt(document.getElementById("setLevelInput").value);
+      if (isNaN(level) || !currentUserId) return;
+      if (!confirm(`Set user ${currentUserId} to level ${level}? This replaces all level-up events.`)) return;
+      await fetch(withToken(`/api/user/${currentUserId}/set-level`), {
+        method: "POST", headers: {"content-type": "application/json"},
+        body: JSON.stringify({level})
+      });
+      document.getElementById("setLevelInput").value = "";
       await loadUserData();
     });
 
