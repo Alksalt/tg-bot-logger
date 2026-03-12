@@ -23,7 +23,6 @@ DEFAULT_ECONOMY_TUNING = {
     "xp_level2_base": 300,
     "xp_linear": 80,
     "xp_quadratic": 4,
-    "level_bonus_scale_percent": 40,
 }
 
 TITLES = {
@@ -231,29 +230,9 @@ def build_economy(
     )
 
 
-LEVEL_BONUS_MILESTONES = {
-    5: 500,
-    10: 1200,
-    15: 2200,
-    20: 3500,
-    25: 5200,
-    30: 7600,
-    35: 10800,
-    40: 15000,
-    45: 20500,
-    50: 28000,
-}
-
-
 def level_up_bonus_minutes(level: int, tuning: dict[str, int] | None = None) -> int:
-    cfg = _effective_tuning(tuning)
-    lvl = max(1, level)
-    base = 60 * lvl
-    curve = 5 * lvl * lvl
-    milestone = LEVEL_BONUS_MILESTONES.get(lvl, 0)
-    raw = base + curve + milestone
-    scale = max(0, int(cfg["level_bonus_scale_percent"]))
-    return (raw * scale) // 100
+    lvl = max(2, level)
+    return 20 + 15 * lvl
 
 
 def format_minutes_hm(minutes: int) -> str:

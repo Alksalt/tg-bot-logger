@@ -41,14 +41,15 @@ def test_level_boundaries() -> None:
     assert level_from_xp(684) == 3
 
 
-def test_level_bonus_scales_strongly() -> None:
+def test_level_bonus_increases_with_level() -> None:
     assert level_up_bonus_minutes(5) > level_up_bonus_minutes(2)
-    assert level_up_bonus_minutes(25) > (level_up_bonus_minutes(5) * 5)
+    assert level_up_bonus_minutes(10) > level_up_bonus_minutes(5)
 
 
-def test_level_milestone_bonus_jumps() -> None:
-    assert level_up_bonus_minutes(10) - level_up_bonus_minutes(9) > 500
-    assert level_up_bonus_minutes(25) - level_up_bonus_minutes(24) > 1500
+def test_level_bonus_linear_step() -> None:
+    # Each level adds exactly 15 minutes
+    assert level_up_bonus_minutes(10) - level_up_bonus_minutes(9) == 15
+    assert level_up_bonus_minutes(25) - level_up_bonus_minutes(24) == 15
 
 
 def test_streak_multiplier_thresholds() -> None:
@@ -65,10 +66,9 @@ def test_deep_work_multiplier_thresholds() -> None:
     assert deep_work_multiplier(120) == 1.5
 
 
-def test_level_bonus_default_scale_is_40_percent() -> None:
-    val_40 = level_up_bonus_minutes(5)
-    val_100 = level_up_bonus_minutes(5, tuning={"level_bonus_scale_percent": 100})
-    assert val_40 == (val_100 * 40) // 100
+def test_level_bonus_ignores_tuning() -> None:
+    # tuning param is accepted but ignored in new linear formula
+    assert level_up_bonus_minutes(5) == level_up_bonus_minutes(5, tuning={"anything": 999})
 
 
 def test_milestone_excludes_job(tmp_path) -> None:

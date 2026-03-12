@@ -19,7 +19,6 @@ APP_CONFIG_DEFAULTS: dict[str, Any] = {
     "economy.xp_level2_base": 300,
     "economy.xp_linear": 80,
     "economy.xp_quadratic": 4,
-    "economy.level_bonus_scale_percent": 100,
 }
 
 JOB_CONFIG_KEYS = {
